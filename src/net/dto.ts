@@ -2,6 +2,7 @@ import type { Tile } from '../domain/Tile';
 import type { Seat } from '../game/Player';
 import type { Phase, GameResult, DiscardEvent } from '../game/Game';
 import type { Table } from '../game/Table';
+import { WinChecker } from '../domain/WinChecker';
 
 export type PublicState = {
   connected: boolean;
@@ -14,6 +15,7 @@ export type PublicState = {
   yourSeat: Seat | null;
   yourHand: Tile[];
   handCounts: number[]; // 0-3
+  winAvailable: boolean;
   message: string;
   result?: GameResult;
 };
@@ -28,6 +30,9 @@ export function stateFor(table: Table, viewerSocketId: string, connected: boolea
 
   const result = table.game.getResult();
 
+  const canPrompt = !!(started && yourSeat !== null && table.game.currentTurn === yourSeat && table.game.currentPhase !== 'end');
+  const winAvailable = canPrompt ? !!WinChecker.check(yourHand).ok : false;
+
   return {
     connected,
     players,
@@ -39,7 +44,9 @@ export function stateFor(table: Table, viewerSocketId: string, connected: boolea
     yourSeat,
     yourHand,
     handCounts,
+    winAvailable,
     message: table.message,
     ...(result ? { result } : {})
   };
 }
+

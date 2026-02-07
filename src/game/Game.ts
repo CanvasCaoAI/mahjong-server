@@ -96,7 +96,8 @@ export class Game {
     try {
       const tile = this.hands[seat].removeAt(index);
       this.discards.push({ seat, tile });
-      this.turn = (((seat as number) + 1) % 4) as Seat;
+      // Counter-clockwise turn order
+      this.turn = (((seat as number) + 3) % 4) as Seat;
       this.phase = 'draw';
       return { ok: true, message: `座位${seat} 打出 ${tile}，轮到座位${this.turn} 摸牌` };
     } catch {
