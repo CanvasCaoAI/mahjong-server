@@ -2,8 +2,8 @@ import express from 'express';
 import http from 'http';
 import cors from 'cors';
 import { Server } from 'socket.io';
-import { Table } from './game/Table';
 import { stateFor } from './net/dto';
+import { RoomManager } from './rooms/RoomManager';
 
 const app = express();
 app.use(cors());
@@ -12,40 +12,59 @@ app.get('/health', (_req, res) => res.json({ ok: true }));
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: true, credentials: true } });
 
-const table = new Table();
+// 30 days offline retention
+const TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const rooms = new RoomManager(TTL_MS);
 
-function broadcastState() {
-  for (const s of io.sockets.sockets.values()) {
-    s.emit('state', stateFor(table, s.id, s.connected));
-  }
-}
+// simple cleanup timer
+setInterval(() => rooms.cleanup(), 6 * 60 * 60 * 1000).unref();
 
 function errorTo(socketId: string, message: string) {
   io.to(socketId).emit('errorMsg', { message });
 }
 
+function broadcastRoom(roomId: string) {
+  const table = rooms.get(roomId);
+  for (const s of io.sockets.sockets.values()) {
+    const auth: any = s.handshake.auth || {};
+    if (auth.roomId !== roomId) continue;
+    s.emit('state', stateFor(table, s.id, s.connected));
+  }
+}
+
 io.on('connection', (socket) => {
-  // auto-join the single table
-  const joinRes = table.join(socket.id);
+  const auth: any = socket.handshake.auth || {};
+  const roomId = String(auth.roomId || '').trim();
+  const clientId = String(auth.clientId || '').trim();
+
+  if (!roomId || !clientId) {
+    errorTo(socket.id, '缺少 roomId/clientId');
+    socket.disconnect(true);
+    return;
+  }
+
+  const table = rooms.get(roomId);
+
+  const joinRes = table.joinOrReconnect({ clientId, socketId: socket.id });
   if (!joinRes.ok) {
     errorTo(socket.id, joinRes.message ?? '无法加入');
     socket.disconnect(true);
     return;
   }
 
-  broadcastState();
+  broadcastRoom(roomId);
 
   socket.on('setName', ({ name }: { name?: string }) => {
     const n = (name ?? '').trim();
     if (!n) return;
     table.setName(socket.id, n.slice(0, 24));
     table.message = `${n} 已加入。`;
-    broadcastState();
+    broadcastRoom(roomId);
   });
 
   socket.on('ready', () => {
     table.setReady(socket.id);
-    broadcastState();
+    broadcastRoom(roomId);
   });
 
   socket.on('draw', () => {
@@ -54,7 +73,7 @@ io.on('connection', (socket) => {
     const r = table.game.draw(seat);
     table.message = r.message;
     if (!r.ok) errorTo(socket.id, r.message);
-    broadcastState();
+    broadcastRoom(roomId);
   });
 
   socket.on('discard', ({ index }: { index: number }) => {
@@ -63,7 +82,7 @@ io.on('connection', (socket) => {
     const r = table.game.discard(seat, index);
     table.message = r.message;
     if (!r.ok) errorTo(socket.id, r.message);
-    broadcastState();
+    broadcastRoom(roomId);
   });
 
   socket.on('checkWin', () => {
@@ -72,17 +91,12 @@ io.on('connection', (socket) => {
     const r = table.game.checkWin(seat);
     table.message = r.message;
     if (!r.ok) errorTo(socket.id, r.message);
-    broadcastState();
-  });
-
-  socket.on('reset', () => {
-    table.reset();
-    broadcastState();
+    broadcastRoom(roomId);
   });
 
   socket.on('disconnect', () => {
-    table.leave(socket.id);
-    broadcastState();
+    table.markOffline(socket.id);
+    broadcastRoom(roomId);
   });
 });
 
