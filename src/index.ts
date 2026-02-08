@@ -94,6 +94,24 @@ io.on('connection', (socket) => {
     broadcastRoom(roomId);
   });
 
+  socket.on('peng', () => {
+    const seat = table.findSeat(socket.id);
+    if (seat === null) return;
+    const r = table.game.peng(seat);
+    table.message = r.message;
+    if (!r.ok) errorTo(socket.id, r.message);
+    broadcastRoom(roomId);
+  });
+
+  socket.on('passClaim', () => {
+    const seat = table.findSeat(socket.id);
+    if (seat === null) return;
+    const r = table.game.passClaim(seat);
+    table.message = r.message;
+    if (!r.ok) errorTo(socket.id, r.message);
+    broadcastRoom(roomId);
+  });
+
   socket.on('disconnect', () => {
     table.markOffline(socket.id);
     broadcastRoom(roomId);

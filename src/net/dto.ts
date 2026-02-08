@@ -1,6 +1,6 @@
 import type { Tile } from '../domain/Tile';
 import type { Seat } from '../game/Player';
-import type { Phase, GameResult, DiscardEvent } from '../game/Game';
+import type { Phase, GameResult, DiscardEvent, Meld } from '../game/Game';
 import type { Table } from '../game/Table';
 import { WinChecker } from '../domain/WinChecker';
 
@@ -14,8 +14,10 @@ export type PublicState = {
   phase: Phase;
   yourSeat: Seat | null;
   yourHand: Tile[];
+  yourMelds: Meld[];
   handCounts: number[]; // 0-3
   winAvailable: boolean;
+  pengAvailable: boolean;
   message: string;
   result?: GameResult;
 };
@@ -26,12 +28,23 @@ export function stateFor(table: Table, viewerSocketId: string, connected: boolea
   const players = table.players.map(p => (p ? { seat: p.seat, name: p.name, ready: p.ready } : null));
 
   const yourHand = yourSeat !== null ? table.game.getHand(yourSeat) : [];
+  const yourMelds = yourSeat !== null ? table.game.getMelds(yourSeat) : [];
   const handCounts = ([0, 1, 2, 3] as const).map((s) => table.game.getHandCount(s));
 
   const result = table.game.getResult();
 
   const canPrompt = !!(started && yourSeat !== null && table.game.currentTurn === yourSeat && table.game.currentPhase !== 'end');
   const winAvailable = canPrompt ? !!WinChecker.check(yourHand).ok : false;
+
+  const pending = table.game.getPendingClaim();
+  const pengAvailable = !!(
+    started &&
+    yourSeat !== null &&
+    pending &&
+    table.game.currentPhase === 'claim' &&
+    pending.fromSeat !== yourSeat &&
+    yourHand.filter(t => t === pending.tile).length >= 2
+  );
 
   return {
     connected,
@@ -43,8 +56,10 @@ export function stateFor(table: Table, viewerSocketId: string, connected: boolea
     phase: table.game.currentPhase,
     yourSeat,
     yourHand,
+    yourMelds,
     handCounts,
     winAvailable,
+    pengAvailable,
     message: table.message,
     ...(result ? { result } : {})
   };
