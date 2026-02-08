@@ -95,6 +95,15 @@ export class Game {
     return this.melds[seat].slice();
   }
 
+  getAllMelds(): [Meld[], Meld[], Meld[], Meld[]] {
+    return [
+      this.melds[0].slice(),
+      this.melds[1].slice(),
+      this.melds[2].slice(),
+      this.melds[3].slice(),
+    ];
+  }
+
   getPendingClaim() {
     return this.pendingClaim ? { tile: this.pendingClaim.tile, fromSeat: this.pendingClaim.fromSeat, passed: new Set(this.pendingClaim.passed) } : null;
   }

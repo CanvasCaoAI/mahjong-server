@@ -15,6 +15,7 @@ export type PublicState = {
   yourSeat: Seat | null;
   yourHand: Tile[];
   yourMelds: Meld[];
+  meldsBySeat: Meld[][];
   handCounts: number[]; // 0-3
   winAvailable: boolean;
   pengAvailable: boolean;
@@ -29,6 +30,7 @@ export function stateFor(table: Table, viewerSocketId: string, connected: boolea
 
   const yourHand = yourSeat !== null ? table.game.getHand(yourSeat) : [];
   const yourMelds = yourSeat !== null ? table.game.getMelds(yourSeat) : [];
+  const meldsBySeat = table.game.getAllMelds();
   const handCounts = ([0, 1, 2, 3] as const).map((s) => table.game.getHandCount(s));
 
   const result = table.game.getResult();
@@ -57,6 +59,7 @@ export function stateFor(table: Table, viewerSocketId: string, connected: boolea
     yourSeat,
     yourHand,
     yourMelds,
+    meldsBySeat,
     handCounts,
     winAvailable,
     pengAvailable,

@@ -28,7 +28,14 @@ function broadcastRoom(roomId: string) {
   for (const s of io.sockets.sockets.values()) {
     const auth: any = s.handshake.auth || {};
     if (auth.roomId !== roomId) continue;
-    s.emit('state', stateFor(table, s.id, s.connected));
+    const st: any = stateFor(table, s.id, s.connected);
+
+    // debug: log meldsBySeat once when present
+    if (st?.meldsBySeat?.some?.((x: any) => (x?.length ?? 0) > 0)) {
+      console.log('[state] meldsBySeat', st.meldsBySeat.map((x: any) => x.length));
+    }
+
+    s.emit('state', st);
   }
 }
 
