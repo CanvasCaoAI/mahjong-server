@@ -8,8 +8,8 @@ import { countTile, allSeats, chiOptions } from './claim';
 export type Phase = 'draw' | 'discard' | 'claim' | 'end';
 
 export type GameResult = {
-  winnerSeat: Seat;
-  hand: Tile[];
+  winners: Seat[];
+  handsBySeat: Partial<Record<Seat, Tile[]>>;
   reason: string;
 };
 
@@ -24,13 +24,72 @@ export class Game {
     return countTile(hand, tile) >= 2;
   }
 
-  private resolveClaimIfAllPassed(): boolean {
+  private resolveClaimIfReady(): boolean {
     if (!this.pendingClaim) return false;
-    const passed = this.pendingClaim.passed;
-    const all = allSeats().every((s) => passed.has(s));
-    if (!all) return false;
 
-    // 所有人都“过”：进入下一家摸牌
+    const p = this.pendingClaim;
+
+    const allHuDecided = [...p.huEligible].every((s) => p.huDecision.has(s));
+    if (!allHuDecided) return false;
+
+    // Hu priority（支持一炮多响）
+    const huWinners = [...p.huEligible].filter((s) => p.huDecision.get(s) === 'hu');
+    if (huWinners.length > 0) {
+      const winners = huWinners.sort((a, b) => (a as number) - (b as number));
+      const handsBySeat: Partial<Record<Seat, Tile[]>> = {};
+      let reason = '胡牌';
+
+      for (const w of winners) {
+        const tiles = [...this.tilesForWin(w), p.tile];
+        const r = WinChecker.check(tiles);
+        if (!r.ok) {
+          // 如果出现不一致，视为该玩家过
+          p.huDecision.set(w, 'pass');
+          continue;
+        }
+        handsBySeat[w] = tiles;
+        reason = r.reason ?? reason;
+      }
+
+      const finalWinners = winners.filter((w) => !!handsBySeat[w]);
+      if (finalWinners.length > 0) {
+        this.phase = 'end';
+        this.result = { winners: finalWinners, handsBySeat, reason };
+        this.pendingClaim = null;
+        return true;
+      }
+    }
+
+    const allPengDecided = [...p.pengEligible].every((s) => p.pengDecision.has(s));
+    if (!allPengDecided) return false;
+
+    const pengChoosers = [...p.pengEligible].filter((s) => p.pengDecision.get(s) === 'peng');
+    if (pengChoosers.length > 0) {
+      const seat = pengChoosers.sort((a, b) => (a as number) - (b as number))[0]!;
+      // execute peng immediately
+      const rr = this.execPeng(seat);
+      if (rr.ok) {
+        this.pendingClaim = null;
+        return true;
+      }
+      // failed => treat as pass
+      p.pengDecision.set(seat, 'pass');
+    }
+
+    // Chi is only for chiSeat
+    if (p.chiEligible) {
+      if (!p.chiDecision) return false;
+      if (p.chiDecision === 'chi') {
+        const rr = this.execChi(p.chiSeat);
+        if (rr.ok) {
+          this.pendingClaim = null;
+          return true;
+        }
+        p.chiDecision = 'pass';
+      }
+    }
+
+    // Everyone passed at all available levels => draw phase
     this.pendingClaim = null;
     this.phase = 'draw';
     return true;
@@ -44,7 +103,19 @@ export class Game {
   private started = false;
   private result: GameResult | undefined;
 
-  private pendingClaim: { tile: Tile; fromSeat: Seat; chiSeat: Seat; passed: Set<Seat> } | null = null;
+  private pendingClaim: {
+    tile: Tile;
+    fromSeat: Seat;
+    chiSeat: Seat;
+
+    huEligible: Set<Seat>;
+    pengEligible: Set<Seat>;
+    chiEligible: boolean;
+
+    huDecision: Map<Seat, 'hu' | 'pass'>;
+    pengDecision: Map<Seat, 'peng' | 'pass'>;
+    chiDecision: 'chi' | 'pass' | null;
+  } | null = null;
 
   start(opts?: { debug?: boolean }) {
     this.wall = opts?.debug ? Wall.debugMan() : Wall.full();
@@ -112,14 +183,19 @@ export class Game {
   }
 
   getPendingClaim() {
-    return this.pendingClaim
-      ? {
-          tile: this.pendingClaim.tile,
-          fromSeat: this.pendingClaim.fromSeat,
-          chiSeat: this.pendingClaim.chiSeat,
-          passed: new Set(this.pendingClaim.passed)
-        }
-      : null;
+    if (!this.pendingClaim) return null;
+    const p = this.pendingClaim;
+    return {
+      tile: p.tile,
+      fromSeat: p.fromSeat,
+      chiSeat: p.chiSeat,
+      huEligible: [...p.huEligible],
+      pengEligible: [...p.pengEligible],
+      chiEligible: p.chiEligible,
+      huDecided: [...p.huDecision.keys()],
+      pengDecided: [...p.pengDecision.keys()],
+      chiDecided: p.chiDecision !== null,
+    };
   }
 
   getHandCount(seat: Seat): number {
@@ -159,41 +235,41 @@ export class Game {
       const nextTurn = (((seat as number) + 1) % 4) as Seat;
       this.turn = nextTurn;
 
-      // 进入“可碰/可吃”窗口。
-      // 规则简化：
-      // 1) 只要有人能碰，则只处理“碰/过”（碰优先于吃）。
-      // 2) 若无人能碰，则仅允许下一家（this.turn）吃。
-
-      // 吃：只允许下一家（当前 turn）
+      // 进入“可胡/可碰/可吃”窗口：同时计算，同时展示。
       const chiSeat = this.turn;
-      const chiOpts = chiOptions(this.hands[chiSeat].list, tile);
-      const chiPossible = chiOpts.length > 0;
+      const chiPossible = chiOptions(this.hands[chiSeat].list, tile).length > 0;
 
-      // 哪些座位有操作可选（碰 或 吃）
-      const eligible = (s: Seat) => {
-        if (s === seat) return false;
-        if (this.hasPengOpportunity(s, tile)) return true;
-        if (s === chiSeat && chiPossible) return true;
-        return false;
-      };
+      const huEligible = new Set<Seat>();
+      const pengEligible = new Set<Seat>();
 
-      // 只有有操作的人需要选择；其他人自动视为“过”
-      const passed = new Set<Seat>([seat]);
       for (const s of allSeats()) {
         if (s === seat) continue;
-        if (!eligible(s)) passed.add(s);
+        if (WinChecker.check([...this.tilesForWin(s), tile]).ok) huEligible.add(s);
+        if (this.hasPengOpportunity(s, tile)) pengEligible.add(s);
       }
 
-      if (passed.size === 4) {
-        // 无人可碰/可吃：直接进入摸牌
+      const chiEligible = chiPossible; // only chiSeat can act; availability checked in dto
+
+      if (huEligible.size === 0 && pengEligible.size === 0 && !chiEligible) {
         this.pendingClaim = null;
         this.phase = 'draw';
-        return { ok: true, message: `座位${seat} 打出 ${tile}，无人可碰/可吃，轮到座位${this.turn} 摸牌` };
+        return { ok: true, message: `座位${seat} 打出 ${tile}，无人可胡/可碰/可吃，轮到座位${this.turn} 摸牌` };
       }
 
-      this.pendingClaim = { tile, fromSeat: seat, chiSeat, passed };
+      this.pendingClaim = {
+        tile,
+        fromSeat: seat,
+        chiSeat,
+        huEligible,
+        pengEligible,
+        chiEligible,
+        huDecision: new Map(),
+        pengDecision: new Map(),
+        chiDecision: null,
+      };
+
       this.phase = 'claim';
-      return { ok: true, message: `座位${seat} 打出 ${tile}（可碰/可吃）` };
+      return { ok: true, message: `座位${seat} 打出 ${tile}（等待胡/碰/吃）` };
     } catch {
       return { ok: false, message: '打出的牌不合法' };
     }
@@ -201,12 +277,16 @@ export class Game {
 
   passClaim(seat: Seat): { ok: boolean; message: string } {
     if (!this.started) return { ok: false, message: '游戏尚未开始' };
-    if (this.phase !== 'claim' || !this.pendingClaim) return { ok: false, message: '当前没有可处理的吃/碰' };
+    if (this.phase !== 'claim' || !this.pendingClaim) return { ok: false, message: '当前没有可处理的胡/碰/吃' };
     if (seat === this.pendingClaim.fromSeat) return { ok: true, message: '打牌者无需选择过' };
 
-    this.pendingClaim.passed.add(seat);
-    const resolved = this.resolveClaimIfAllPassed();
-    return { ok: true, message: resolved ? `座位${seat} 过，轮到座位${this.turn} 摸牌` : `座位${seat} 过` };
+    const p = this.pendingClaim;
+    if (p.huEligible.has(seat) && !p.huDecision.has(seat)) p.huDecision.set(seat, 'pass');
+    if (p.pengEligible.has(seat) && !p.pengDecision.has(seat)) p.pengDecision.set(seat, 'pass');
+    if (p.chiEligible && seat === p.chiSeat && p.chiDecision === null) p.chiDecision = 'pass';
+
+    const resolved = this.resolveClaimIfReady();
+    return { ok: true, message: resolved ? `座位${seat} 过` : `座位${seat} 过（等待其他人决定）` };
   }
 
   peng(seat: Seat): { ok: boolean; message: string } {
@@ -214,12 +294,48 @@ export class Game {
     if (this.phase !== 'claim' || !this.pendingClaim) return { ok: false, message: '当前不能碰' };
     if (seat === this.pendingClaim.fromSeat) return { ok: false, message: '不能碰自己打出的牌' };
 
-    const tile = this.pendingClaim.tile;
-    const fromSeat = this.pendingClaim.fromSeat;
+    const p = this.pendingClaim;
+    if (seat === p.fromSeat) return { ok: false, message: '不能碰自己打出的牌' };
+    if (!p.pengEligible.has(seat)) return { ok: false, message: '当前不能碰' };
+
+    // 如果你本来可胡但选择碰，等价于对“胡”选择过
+    if (p.huEligible.has(seat) && !p.huDecision.has(seat)) p.huDecision.set(seat, 'pass');
+
+    p.pengDecision.set(seat, 'peng');
+
+    const resolved = this.resolveClaimIfReady();
+    return { ok: true, message: resolved ? `座位${seat} 碰（已结算）` : `座位${seat} 碰（已记录，等待胡/碰更高优先级决定）` };
+  }
+
+  chi(seat: Seat): { ok: boolean; message: string } {
+    if (!this.started) return { ok: false, message: '游戏尚未开始' };
+    if (this.phase !== 'claim' || !this.pendingClaim) return { ok: false, message: '当前不能吃' };
+    if (seat !== this.pendingClaim.chiSeat) return { ok: false, message: '只有下一家可以吃' };
+    if (seat === this.pendingClaim.fromSeat) return { ok: false, message: '不能吃自己打出的牌' };
+
+    const p = this.pendingClaim;
+    if (!p.chiEligible) return { ok: false, message: '当前不能吃' };
+    if (seat === p.fromSeat) return { ok: false, message: '不能吃自己打出的牌' };
+
+    // choosing chi implies pass on higher priority
+    if (p.huEligible.has(seat) && !p.huDecision.has(seat)) p.huDecision.set(seat, 'pass');
+    if (p.pengEligible.has(seat) && !p.pengDecision.has(seat)) p.pengDecision.set(seat, 'pass');
+
+    p.chiDecision = 'chi';
+
+    const resolved = this.resolveClaimIfReady();
+    return { ok: true, message: resolved ? `座位${seat} 吃（已结算）` : `座位${seat} 吃（已记录，等待胡/碰更高优先级决定）` };
+  }
+
+  private execPeng(seat: Seat): { ok: boolean; message: string } {
+    const p = this.pendingClaim;
+    if (!p) return { ok: false, message: 'no claim' };
+    const tile = p.tile;
+    const fromSeat = p.fromSeat;
 
     if (!this.hasPengOpportunity(seat, tile)) return { ok: false, message: '手牌不足两张，不能碰' };
 
-    // 从手牌中移除两张相同的牌
+    // remove two from hand
     let removed = 0;
     const hand = this.hands[seat].list.slice();
     for (let i = hand.length - 1; i >= 0 && removed < 2; i--) {
@@ -230,36 +346,25 @@ export class Game {
     }
     if (removed < 2) return { ok: false, message: '碰牌失败（移除手牌异常）' };
 
-    // 移除最后一张弃牌（被碰走）
     const last = this.discards[this.discards.length - 1];
-    if (!last || last.tile !== tile || last.seat !== fromSeat) {
-      return { ok: false, message: '碰牌失败（弃牌已变化）' };
-    }
+    if (!last || last.tile !== tile || last.seat !== fromSeat) return { ok: false, message: '碰牌失败（弃牌已变化）' };
     this.discards.pop();
 
     this.melds[seat].push({ type: 'peng', tiles: [tile, tile, tile], fromSeat });
-
-    // 碰完后轮到碰牌者出牌
-    this.pendingClaim = null;
     this.turn = seat;
     this.phase = 'discard';
-
     return { ok: true, message: `座位${seat} 碰 ${tile}` };
   }
 
-  chi(seat: Seat): { ok: boolean; message: string } {
-    if (!this.started) return { ok: false, message: '游戏尚未开始' };
-    if (this.phase !== 'claim' || !this.pendingClaim) return { ok: false, message: '当前不能吃' };
-    if (seat !== this.pendingClaim.chiSeat) return { ok: false, message: '只有下一家可以吃' };
-    if (seat === this.pendingClaim.fromSeat) return { ok: false, message: '不能吃自己打出的牌' };
-
-    const tile = this.pendingClaim.tile;
-    const fromSeat = this.pendingClaim.fromSeat;
+  private execChi(seat: Seat): { ok: boolean; message: string } {
+    const p = this.pendingClaim;
+    if (!p) return { ok: false, message: 'no claim' };
+    const tile = p.tile;
+    const fromSeat = p.fromSeat;
 
     const opts = chiOptions(this.hands[seat].list, tile);
     if (!opts.length) return { ok: false, message: '当前不能吃' };
 
-    // 简化：自动选择第一种可吃组合
     const first = opts[0];
     if (!first) return { ok: false, message: '当前不能吃' };
     const [a, b] = first;
@@ -277,35 +382,54 @@ export class Game {
 
     if (!removeOne(a) || !removeOne(b)) return { ok: false, message: '吃牌失败（移除手牌异常）' };
 
-    // 移除最后一张弃牌（被吃走）
     const last = this.discards[this.discards.length - 1];
-    if (!last || last.tile !== tile || last.seat !== fromSeat) {
-      return { ok: false, message: '吃牌失败（弃牌已变化）' };
-    }
+    if (!last || last.tile !== tile || last.seat !== fromSeat) return { ok: false, message: '吃牌失败（弃牌已变化）' };
     this.discards.pop();
 
     this.melds[seat].push({ type: 'chi', tiles: [a, tile, b], fromSeat });
-
-    this.pendingClaim = null;
     this.turn = seat;
     this.phase = 'discard';
-
     return { ok: true, message: `座位${seat} 吃 ${tile}` };
   }
 
-  checkWin(seat: Seat): { ok: boolean; message: string } {
+  private tilesForWin(seat: Seat): Tile[] {
+    const hand = this.hands[seat].list;
+    const meldTiles = this.melds[seat].flatMap(m => m.tiles);
+    return [...hand, ...meldTiles];
+  }
+
+  hu(seat: Seat): { ok: boolean; message: string } {
     if (!this.started) return { ok: false, message: '游戏尚未开始' };
     if (this.phase === 'end') return { ok: false, message: '游戏已结束' };
-    if (this.phase === 'claim') return { ok: false, message: '请先处理“碰/过”' };
-    if (seat !== this.turn) return { ok: false, message: '还没轮到你' };
 
-    const hand = this.hands[seat].list;
-    const r = WinChecker.check(hand);
+    // 点炮胡：claim 阶段（只记录决定，等待所有可胡者决定后结算）
+    if (this.phase === 'claim' && this.pendingClaim) {
+      const p = this.pendingClaim;
+      if (seat === p.fromSeat) return { ok: false, message: '不能胡自己打出的牌' };
+      if (!p.huEligible.has(seat)) return { ok: false, message: '当前不能胡' };
+      if (p.huDecision.has(seat)) return { ok: true, message: '已选择' };
+
+      p.huDecision.set(seat, 'hu');
+      const resolved = this.resolveClaimIfReady();
+      return { ok: true, message: resolved ? `座位${seat} 胡（已结算）` : `座位${seat} 胡（已记录，等待其他胡家决定）` };
+    }
+
+    // 自摸胡：仅轮到你时
+    if (seat !== this.turn) return { ok: false, message: '还没轮到你' };
+    if (this.phase === 'claim') return { ok: false, message: '请先处理“吃/碰/过”' };
+
+    const tiles = this.tilesForWin(seat);
+    const r = WinChecker.check(tiles);
     if (r.ok) {
       this.phase = 'end';
-      this.result = { winnerSeat: seat, hand, reason: r.reason ?? '胡牌' };
+      this.result = { winners: [seat], handsBySeat: { [seat]: tiles }, reason: r.reason ?? '胡牌' };
       return { ok: true, message: `座位${seat} 胡了` };
     }
     return { ok: false, message: r.reason ?? '不能胡' };
+  }
+
+  // Back-compat: keep old event name
+  checkWin(seat: Seat): { ok: boolean; message: string } {
+    return this.hu(seat);
   }
 }

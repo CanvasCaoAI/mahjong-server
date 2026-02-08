@@ -37,16 +37,35 @@ export function stateFor(table: Table, viewerSocketId: string, connected: boolea
 
   const result = table.game.getResult();
 
-  const canPrompt = !!(started && yourSeat !== null && table.game.currentTurn === yourSeat && table.game.currentPhase !== 'end');
-  const winAvailable = canPrompt ? !!WinChecker.check(yourHand).ok : false;
-
   const pending = table.game.getPendingClaim();
+
+  // 自摸胡：轮到你且不在 claim
+  const canSelfHu = !!(started && yourSeat !== null && table.game.currentTurn === yourSeat && table.game.currentPhase !== 'end' && table.game.currentPhase !== 'claim');
+  const tilesForWin = [...yourHand, ...yourMelds.flatMap(m => m.tiles)];
+  const selfWinAvailable = canSelfHu ? !!WinChecker.check(tilesForWin).ok : false;
+
+  // 点炮胡：claim 阶段，且该 seat 在 huEligible 中且尚未决定
+  const claimWinAvailable = !!(
+    started &&
+    yourSeat !== null &&
+    pending &&
+    table.game.currentPhase === 'claim' &&
+    pending.fromSeat !== yourSeat &&
+    pending.huEligible.includes(yourSeat) &&
+    !pending.huDecided.includes(yourSeat) &&
+    WinChecker.check([...tilesForWin, pending.tile]).ok
+  );
+
+  const winAvailable = selfWinAvailable || claimWinAvailable;
+
   const pengAvailable = !!(
     started &&
     yourSeat !== null &&
     pending &&
     table.game.currentPhase === 'claim' &&
     pending.fromSeat !== yourSeat &&
+    pending.pengEligible.includes(yourSeat) &&
+    !pending.pengDecided.includes(yourSeat) &&
     yourHand.filter(t => t === pending.tile).length >= 2
   );
 
@@ -55,7 +74,9 @@ export function stateFor(table: Table, viewerSocketId: string, connected: boolea
     yourSeat !== null &&
     pending &&
     table.game.currentPhase === 'claim' &&
+    pending.chiEligible &&
     pending.chiSeat === yourSeat &&
+    !pending.chiDecided &&
     chiOptions(yourHand, pending.tile).length > 0
   );
 

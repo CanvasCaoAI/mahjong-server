@@ -87,10 +87,20 @@ io.on('connection', (socket) => {
     broadcastRoom(roomId);
   });
 
+  socket.on('hu', () => {
+    const seat = table.findSeat(socket.id);
+    if (seat === null) return;
+    const r = table.game.hu(seat);
+    table.message = r.message;
+    if (!r.ok) errorTo(socket.id, r.message);
+    broadcastRoom(roomId);
+  });
+
+  // Back-compat
   socket.on('checkWin', () => {
     const seat = table.findSeat(socket.id);
     if (seat === null) return;
-    const r = table.game.checkWin(seat);
+    const r = table.game.hu(seat);
     table.message = r.message;
     if (!r.ok) errorTo(socket.id, r.message);
     broadcastRoom(roomId);
