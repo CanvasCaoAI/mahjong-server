@@ -1,5 +1,6 @@
 import type { Tile } from './Tile';
 import { indexToTile } from './Tile';
+import { makeDebugWallTiles } from './debugTile';
 
 function shuffle<T>(a: T[]): T[] {
   for (let i = a.length - 1; i > 0; i--) {
@@ -27,6 +28,11 @@ export class Wall {
     }
     shuffle(tiles);
     return new Wall(tiles);
+  }
+
+  static debugMan(): Wall {
+    // 136 张全是万子，用于 debug
+    return new Wall(makeDebugWallTiles(136));
   }
 
   draw(): Tile | null {

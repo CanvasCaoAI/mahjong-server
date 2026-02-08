@@ -28,14 +28,7 @@ function broadcastRoom(roomId: string) {
   for (const s of io.sockets.sockets.values()) {
     const auth: any = s.handshake.auth || {};
     if (auth.roomId !== roomId) continue;
-    const st: any = stateFor(table, s.id, s.connected);
-
-    // debug: log meldsBySeat once when present
-    if (st?.meldsBySeat?.some?.((x: any) => (x?.length ?? 0) > 0)) {
-      console.log('[state] meldsBySeat', st.meldsBySeat.map((x: any) => x.length));
-    }
-
-    s.emit('state', st);
+    s.emit('state', stateFor(table, s.id, s.connected));
   }
 }
 
@@ -52,7 +45,9 @@ io.on('connection', (socket) => {
 
   const table = rooms.get(roomId);
 
-  const joinRes = table.joinOrReconnect({ clientId, socketId: socket.id });
+  const debug = !!auth.debug;
+
+  const joinRes = table.joinOrReconnect({ clientId, socketId: socket.id, debug });
   if (!joinRes.ok) {
     errorTo(socket.id, joinRes.message ?? '无法加入');
     socket.disconnect(true);
@@ -114,6 +109,15 @@ io.on('connection', (socket) => {
     const seat = table.findSeat(socket.id);
     if (seat === null) return;
     const r = table.game.passClaim(seat);
+    table.message = r.message;
+    if (!r.ok) errorTo(socket.id, r.message);
+    broadcastRoom(roomId);
+  });
+
+  socket.on('chi', () => {
+    const seat = table.findSeat(socket.id);
+    if (seat === null) return;
+    const r = table.game.chi(seat);
     table.message = r.message;
     if (!r.ok) errorTo(socket.id, r.message);
     broadcastRoom(roomId);

@@ -3,6 +3,7 @@ import type { Seat } from '../game/Player';
 import type { Phase, GameResult, DiscardEvent, Meld } from '../game/Game';
 import type { Table } from '../game/Table';
 import { WinChecker } from '../domain/WinChecker';
+import { chiOptions } from '../game/claim';
 
 export type PublicState = {
   connected: boolean;
@@ -19,6 +20,7 @@ export type PublicState = {
   handCounts: number[]; // 0-3
   winAvailable: boolean;
   pengAvailable: boolean;
+  chiAvailable: boolean;
   message: string;
   result?: GameResult;
 };
@@ -48,6 +50,15 @@ export function stateFor(table: Table, viewerSocketId: string, connected: boolea
     yourHand.filter(t => t === pending.tile).length >= 2
   );
 
+  const chiAvailable = !!(
+    started &&
+    yourSeat !== null &&
+    pending &&
+    table.game.currentPhase === 'claim' &&
+    pending.chiSeat === yourSeat &&
+    chiOptions(yourHand, pending.tile).length > 0
+  );
+
   return {
     connected,
     players,
@@ -63,6 +74,7 @@ export function stateFor(table: Table, viewerSocketId: string, connected: boolea
     handCounts,
     winAvailable,
     pengAvailable,
+    chiAvailable,
     message: table.message,
     ...(result ? { result } : {})
   };
