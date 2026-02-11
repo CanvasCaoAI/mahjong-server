@@ -4,6 +4,7 @@ import { Wall } from '../domain/Wall';
 import { WinChecker } from '../domain/WinChecker';
 import type { Seat } from './Player';
 import { countTile, allSeats, chiOptions } from './claim';
+import { decidePendingClaim, type PendingClaim } from './claimResolver';
 
 export type Phase = 'draw' | 'discard' | 'claim' | 'end';
 
@@ -34,14 +35,13 @@ export class Game {
     if (!this.pendingClaim) return false;
 
     const p = this.pendingClaim;
+    const decision = decidePendingClaim(p);
 
-    const allHuDecided = [...p.huEligible].every((s) => p.huDecision.has(s));
-    if (!allHuDecided) return false;
+    if (decision.kind === 'wait') return false;
 
-    // Hu priority（支持一炮多响）
-    const huWinners = [...p.huEligible].filter((s) => p.huDecision.get(s) === 'hu');
-    if (huWinners.length > 0) {
-      const winners = huWinners.sort((a, b) => (a as number) - (b as number));
+    if (decision.kind === 'hu') {
+      // 胡（支持一炮多响）：这里仍然由 Game 负责做最终校验 + 写入 result
+      const winners = decision.winners;
       const handsBySeat: Partial<Record<Seat, Tile[]>> = {};
       let reason = '胡牌';
 
@@ -64,52 +64,43 @@ export class Game {
         this.pendingClaim = null;
         return true;
       }
+
+      // 如果胡家都被校验刷掉了，则继续等待（理论上不常发生）
+      return false;
     }
 
-    const allGangDecided = [...p.gangEligible].every((s) => p.gangDecision.has(s));
-    if (!allGangDecided) return false;
-
-    const gangChoosers = [...p.gangEligible].filter((s) => p.gangDecision.get(s) === 'gang');
-    if (gangChoosers.length > 0) {
-      const seat = gangChoosers.sort((a, b) => (a as number) - (b as number))[0]!;
-      const rr = this.execGangFromDiscard(seat);
+    if (decision.kind === 'gang') {
+      const rr = this.execGangFromDiscard(decision.seat);
       if (rr.ok) {
         this.pendingClaim = null;
         return true;
       }
-      p.gangDecision.set(seat, 'pass');
+      // 失败则视为该玩家“过”，然后继续等待下一轮决策
+      p.gangDecision.set(decision.seat, 'pass');
+      return false;
     }
 
-    const allPengDecided = [...p.pengEligible].every((s) => p.pengDecision.has(s));
-    if (!allPengDecided) return false;
-
-    const pengChoosers = [...p.pengEligible].filter((s) => p.pengDecision.get(s) === 'peng');
-    if (pengChoosers.length > 0) {
-      const seat = pengChoosers.sort((a, b) => (a as number) - (b as number))[0]!;
-      // execute peng immediately
-      const rr = this.execPeng(seat);
+    if (decision.kind === 'peng') {
+      const rr = this.execPeng(decision.seat);
       if (rr.ok) {
         this.pendingClaim = null;
         return true;
       }
-      // failed => treat as pass
-      p.pengDecision.set(seat, 'pass');
+      p.pengDecision.set(decision.seat, 'pass');
+      return false;
     }
 
-    // Chi is only for chiSeat
-    if (p.chiEligible) {
-      if (!p.chiDecision) return false;
-      if (p.chiDecision === 'chi') {
-        const rr = this.execChi(p.chiSeat);
-        if (rr.ok) {
-          this.pendingClaim = null;
-          return true;
-        }
-        p.chiDecision = 'pass';
+    if (decision.kind === 'chi') {
+      const rr = this.execChi(decision.seat);
+      if (rr.ok) {
+        this.pendingClaim = null;
+        return true;
       }
+      p.chiDecision = 'pass';
+      return false;
     }
 
-    // Everyone passed at all available levels => draw phase
+    // all pass
     this.pendingClaim = null;
     this.phase = 'draw';
     return true;
@@ -123,21 +114,7 @@ export class Game {
   private started = false;
   private result: GameResult | undefined;
 
-  private pendingClaim: {
-    tile: Tile;
-    fromSeat: Seat;
-    chiSeat: Seat;
-
-    huEligible: Set<Seat>;
-    gangEligible: Set<Seat>;
-    pengEligible: Set<Seat>;
-    chiEligible: boolean;
-
-    huDecision: Map<Seat, 'hu' | 'pass'>;
-    gangDecision: Map<Seat, 'gang' | 'pass'>;
-    pengDecision: Map<Seat, 'peng' | 'pass'>;
-    chiDecision: 'chi' | 'pass' | null;
-  } | null = null;
+  private pendingClaim: PendingClaim | null = null;
 
   start(opts?: { debug?: boolean; tileCount?: number; sameTile?: Tile }) {
     this.wall = opts?.sameTile ? Wall.debugSame(opts.sameTile) : (opts?.debug ? Wall.debugMan() : Wall.full());
