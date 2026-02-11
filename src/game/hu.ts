@@ -4,7 +4,10 @@ import { WinChecker } from '../domain/WinChecker';
 import type { Meld } from './Game';
 
 export function tilesForWin(hand: Tile[], melds: Meld[]): Tile[] {
-  const meldTiles = melds.flatMap(m => m.tiles);
+  const meldTiles = melds.flatMap(m => {
+    if (m.type === 'gang') return m.tiles.slice(0, 3);
+    return m.tiles;
+  });
   return [...hand, ...meldTiles];
 }
 

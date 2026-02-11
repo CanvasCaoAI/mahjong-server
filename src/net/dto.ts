@@ -19,6 +19,7 @@ export type PublicState = {
   meldsBySeat: Meld[][];
   handCounts: number[]; // 0-3
   winAvailable: boolean;
+  gangAvailable: boolean;
   pengAvailable: boolean;
   chiAvailable: boolean;
   message: string;
@@ -41,7 +42,7 @@ export function stateFor(table: Table, viewerSocketId: string, connected: boolea
 
   // 自摸胡：轮到你且不在 claim
   const canSelfHu = !!(started && yourSeat !== null && table.game.currentTurn === yourSeat && table.game.currentPhase !== 'end' && table.game.currentPhase !== 'claim');
-  const tilesForWin = [...yourHand, ...yourMelds.flatMap(m => m.tiles)];
+  const tilesForWin = [...yourHand, ...yourMelds.flatMap(m => (m.type === 'gang' ? m.tiles.slice(0, 3) : m.tiles))];
   const selfWinAvailable = canSelfHu ? !!WinChecker.check(tilesForWin).ok : false;
 
   // 点炮胡：claim 阶段，且该 seat 在 huEligible 中且尚未决定
@@ -57,6 +58,17 @@ export function stateFor(table: Table, viewerSocketId: string, connected: boolea
   );
 
   const winAvailable = selfWinAvailable || claimWinAvailable;
+
+  const claimGangAvailable = !!(
+    started &&
+    yourSeat !== null &&
+    pending &&
+    table.game.currentPhase === 'claim' &&
+    pending.fromSeat !== yourSeat &&
+    pending.gangEligible?.includes(yourSeat) &&
+    !pending.gangDecided?.includes(yourSeat) &&
+    yourHand.filter(t => t === pending.tile).length >= 3
+  );
 
   const pengAvailable = !!(
     started &&
@@ -80,6 +92,29 @@ export function stateFor(table: Table, viewerSocketId: string, connected: boolea
     chiOptions(yourHand, pending.tile).length > 0
   );
 
+  // 自己回合的暗杠/加杠
+  const selfGangAvailable = (() => {
+    if (!started || yourSeat === null) return false;
+    if (table.game.currentPhase !== 'discard') return false;
+    if (table.game.currentTurn !== yourSeat) return false;
+
+    // 加杠：有碰且手里有第 4 张
+    for (const m of yourMelds) {
+      if (m.type !== 'peng') continue;
+      const t = m.tiles[0];
+      if (yourHand.some(x => x === t)) return true;
+    }
+
+    // 暗杠：手里有 4 张
+    const cnt = new Map<Tile, number>();
+    for (const t of yourHand) cnt.set(t, (cnt.get(t) ?? 0) + 1);
+    for (const c of cnt.values()) if (c >= 4) return true;
+
+    return false;
+  })();
+
+  const gangAvailable = claimGangAvailable || selfGangAvailable;
+
   return {
     connected,
     players,
@@ -94,6 +129,7 @@ export function stateFor(table: Table, viewerSocketId: string, connected: boolea
     meldsBySeat,
     handCounts,
     winAvailable,
+    gangAvailable,
     pengAvailable,
     chiAvailable,
     message: table.message,

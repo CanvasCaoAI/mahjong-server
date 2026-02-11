@@ -16,12 +16,18 @@ export type GameResult = {
 export type DiscardEvent = { seat: Seat; tile: Tile };
 export type Meld =
   | { type: 'peng'; tiles: [Tile, Tile, Tile]; fromSeat: Seat }
-  | { type: 'chi'; tiles: [Tile, Tile, Tile]; fromSeat: Seat };
+  | { type: 'chi'; tiles: [Tile, Tile, Tile]; fromSeat: Seat }
+  | { type: 'gang'; tiles: [Tile, Tile, Tile, Tile]; fromSeat: Seat | null; kind: 'discard' | 'concealed' | 'add' };
 
 export class Game {
   private hasPengOpportunity(seat: Seat, tile: Tile) {
     const hand = this.hands[seat].list;
     return countTile(hand, tile) >= 2;
+  }
+
+  private hasGangOpportunityOnDiscard(seat: Seat, tile: Tile) {
+    const hand = this.hands[seat].list;
+    return countTile(hand, tile) >= 3;
   }
 
   private resolveClaimIfReady(): boolean {
@@ -58,6 +64,20 @@ export class Game {
         this.pendingClaim = null;
         return true;
       }
+    }
+
+    const allGangDecided = [...p.gangEligible].every((s) => p.gangDecision.has(s));
+    if (!allGangDecided) return false;
+
+    const gangChoosers = [...p.gangEligible].filter((s) => p.gangDecision.get(s) === 'gang');
+    if (gangChoosers.length > 0) {
+      const seat = gangChoosers.sort((a, b) => (a as number) - (b as number))[0]!;
+      const rr = this.execGangFromDiscard(seat);
+      if (rr.ok) {
+        this.pendingClaim = null;
+        return true;
+      }
+      p.gangDecision.set(seat, 'pass');
     }
 
     const allPengDecided = [...p.pengEligible].every((s) => p.pengDecision.has(s));
@@ -109,10 +129,12 @@ export class Game {
     chiSeat: Seat;
 
     huEligible: Set<Seat>;
+    gangEligible: Set<Seat>;
     pengEligible: Set<Seat>;
     chiEligible: boolean;
 
     huDecision: Map<Seat, 'hu' | 'pass'>;
+    gangDecision: Map<Seat, 'gang' | 'pass'>;
     pengDecision: Map<Seat, 'peng' | 'pass'>;
     chiDecision: 'chi' | 'pass' | null;
   } | null = null;
@@ -192,9 +214,11 @@ export class Game {
       fromSeat: p.fromSeat,
       chiSeat: p.chiSeat,
       huEligible: [...p.huEligible],
+      gangEligible: [...p.gangEligible],
       pengEligible: [...p.pengEligible],
       chiEligible: p.chiEligible,
       huDecided: [...p.huDecision.keys()],
+      gangDecided: [...p.gangDecision.keys()],
       pengDecided: [...p.pengDecision.keys()],
       chiDecided: p.chiDecision !== null,
     };
@@ -242,20 +266,22 @@ export class Game {
       const chiPossible = chiOptions(this.hands[chiSeat].list, tile).length > 0;
 
       const huEligible = new Set<Seat>();
+      const gangEligible = new Set<Seat>();
       const pengEligible = new Set<Seat>();
 
       for (const s of allSeats()) {
         if (s === seat) continue;
         if (WinChecker.check([...this.tilesForWin(s), tile]).ok) huEligible.add(s);
+        if (this.hasGangOpportunityOnDiscard(s, tile)) gangEligible.add(s);
         if (this.hasPengOpportunity(s, tile)) pengEligible.add(s);
       }
 
       const chiEligible = chiPossible; // only chiSeat can act; availability checked in dto
 
-      if (huEligible.size === 0 && pengEligible.size === 0 && !chiEligible) {
+      if (huEligible.size === 0 && gangEligible.size === 0 && pengEligible.size === 0 && !chiEligible) {
         this.pendingClaim = null;
         this.phase = 'draw';
-        return { ok: true, message: `座位${seat} 打出 ${tile}，无人可胡/可碰/可吃，轮到座位${this.turn} 摸牌` };
+        return { ok: true, message: `座位${seat} 打出 ${tile}，无人可胡/可杠/可碰/可吃，轮到座位${this.turn} 摸牌` };
       }
 
       this.pendingClaim = {
@@ -263,15 +289,17 @@ export class Game {
         fromSeat: seat,
         chiSeat,
         huEligible,
+        gangEligible,
         pengEligible,
         chiEligible,
         huDecision: new Map(),
+        gangDecision: new Map(),
         pengDecision: new Map(),
         chiDecision: null,
       };
 
       this.phase = 'claim';
-      return { ok: true, message: `座位${seat} 打出 ${tile}（等待胡/碰/吃）` };
+      return { ok: true, message: `座位${seat} 打出 ${tile}（等待胡/杠/碰/吃）` };
     } catch {
       return { ok: false, message: '打出的牌不合法' };
     }
@@ -284,11 +312,51 @@ export class Game {
 
     const p = this.pendingClaim;
     if (p.huEligible.has(seat) && !p.huDecision.has(seat)) p.huDecision.set(seat, 'pass');
+    if (p.gangEligible.has(seat) && !p.gangDecision.has(seat)) p.gangDecision.set(seat, 'pass');
     if (p.pengEligible.has(seat) && !p.pengDecision.has(seat)) p.pengDecision.set(seat, 'pass');
     if (p.chiEligible && seat === p.chiSeat && p.chiDecision === null) p.chiDecision = 'pass';
 
     const resolved = this.resolveClaimIfReady();
     return { ok: true, message: resolved ? `座位${seat} 过` : `座位${seat} 过（等待其他人决定）` };
+  }
+
+  gang(seat: Seat): { ok: boolean; message: string } {
+    if (!this.started) return { ok: false, message: '游戏尚未开始' };
+    if (this.phase === 'end') return { ok: false, message: '游戏已结束' };
+
+    // 明杠：claim 阶段（只记录决定，等待所有可胡者决定后结算）
+    if (this.phase === 'claim' && this.pendingClaim) {
+      const p = this.pendingClaim;
+      if (seat === p.fromSeat) return { ok: false, message: '不能杠自己打出的牌' };
+      if (!p.gangEligible.has(seat)) return { ok: false, message: '当前不能杠' };
+      if (p.gangDecision.has(seat)) return { ok: true, message: '已选择' };
+
+      // 如果你本来可胡但选择杠，等价于对“胡”选择过
+      if (p.huEligible.has(seat) && !p.huDecision.has(seat)) p.huDecision.set(seat, 'pass');
+
+      p.gangDecision.set(seat, 'gang');
+      const resolved = this.resolveClaimIfReady();
+      return { ok: true, message: resolved ? `座位${seat} 杠（已结算）` : `座位${seat} 杠（已记录，等待其他人决定）` };
+    }
+
+    // 暗杠/加杠：仅轮到你且在 discard 阶段
+    if (seat !== this.turn) return { ok: false, message: '还没轮到你' };
+    if (this.phase !== 'discard') return { ok: false, message: '当前不能杠' };
+
+    // 优先尝试加杠（更直观）
+    const add = this.findAddGangTile(seat);
+    if (add) {
+      const rr = this.execAddGang(seat, add);
+      return rr;
+    }
+
+    const concealed = this.findConcealedGangTile(seat);
+    if (concealed) {
+      const rr = this.execConcealedGang(seat, concealed);
+      return rr;
+    }
+
+    return { ok: false, message: '当前没有可杠的牌' };
   }
 
   peng(seat: Seat): { ok: boolean; message: string } {
@@ -394,9 +462,116 @@ export class Game {
     return { ok: true, message: `座位${seat} 吃 ${tile}` };
   }
 
+  private drawAfterGang(seat: Seat): { ok: boolean; message: string } {
+    const t = this.wall.draw();
+    if (!t) {
+      this.phase = 'end';
+      return { ok: false, message: '牌堆已空，流局' };
+    }
+    this.hands[seat].add(t);
+    this.phase = 'discard';
+    this.turn = seat;
+    return { ok: true, message: `座位${seat} 补摸` };
+  }
+
+  private execGangFromDiscard(seat: Seat): { ok: boolean; message: string } {
+    const p = this.pendingClaim;
+    if (!p) return { ok: false, message: 'no claim' };
+    const tile = p.tile;
+    const fromSeat = p.fromSeat;
+
+    if (!this.hasGangOpportunityOnDiscard(seat, tile)) return { ok: false, message: '手牌不足三张，不能杠' };
+
+    // remove three from hand
+    let removed = 0;
+    const hand = this.hands[seat].list.slice();
+    for (let i = hand.length - 1; i >= 0 && removed < 3; i--) {
+      if (hand[i] === tile) {
+        this.hands[seat].removeAt(i);
+        removed++;
+      }
+    }
+    if (removed < 3) return { ok: false, message: '杠牌失败（移除手牌异常）' };
+
+    const last = this.discards[this.discards.length - 1];
+    if (!last || last.tile !== tile || last.seat !== fromSeat) return { ok: false, message: '杠牌失败（弃牌已变化）' };
+    this.discards.pop();
+
+    this.melds[seat].push({ type: 'gang', tiles: [tile, tile, tile, tile], fromSeat, kind: 'discard' });
+
+    // 杠后补摸一张，继续出牌
+    const rr = this.drawAfterGang(seat);
+    return rr.ok ? { ok: true, message: `座位${seat} 明杠 ${tile}，${rr.message}` } : rr;
+  }
+
+  private findConcealedGangTile(seat: Seat): Tile | null {
+    const hand = this.hands[seat].list;
+    const cnt = new Map<Tile, number>();
+    for (const t of hand) cnt.set(t, (cnt.get(t) ?? 0) + 1);
+    for (const [t, c] of cnt.entries()) {
+      if (c >= 4) return t;
+    }
+    return null;
+  }
+
+  private findAddGangTile(seat: Seat): Tile | null {
+    const melds = this.melds[seat];
+    const hand = this.hands[seat].list;
+    for (const m of melds) {
+      if (m.type !== 'peng') continue;
+      const t = m.tiles[0];
+      if (countTile(hand, t) >= 1) return t;
+    }
+    return null;
+  }
+
+  private execConcealedGang(seat: Seat, tile: Tile): { ok: boolean; message: string } {
+    const hand = this.hands[seat].list.slice();
+    let removed = 0;
+    for (let i = hand.length - 1; i >= 0 && removed < 4; i--) {
+      if (hand[i] === tile) {
+        this.hands[seat].removeAt(i);
+        removed++;
+      }
+    }
+    if (removed < 4) return { ok: false, message: '暗杠失败（手牌不足）' };
+
+    this.melds[seat].push({ type: 'gang', tiles: [tile, tile, tile, tile], fromSeat: null, kind: 'concealed' });
+    const rr = this.drawAfterGang(seat);
+    return rr.ok ? { ok: true, message: `座位${seat} 暗杠 ${tile}，${rr.message}` } : rr;
+  }
+
+  private execAddGang(seat: Seat, tile: Tile): { ok: boolean; message: string } {
+    // must have a peng meld
+    const melds = this.melds[seat];
+    const idx = melds.findIndex((m) => m.type === 'peng' && m.tiles[0] === tile);
+    if (idx < 0) return { ok: false, message: '加杠失败（没有碰）' };
+
+    // remove one tile from hand
+    const hand = this.hands[seat].list;
+    let removed = false;
+    for (let i = hand.length - 1; i >= 0; i--) {
+      if (hand[i] === tile) {
+        this.hands[seat].removeAt(i);
+        removed = true;
+        break;
+      }
+    }
+    if (!removed) return { ok: false, message: '加杠失败（手牌没有第4张）' };
+
+    const fromSeat = (melds[idx] as any).fromSeat as Seat;
+    melds[idx] = { type: 'gang', tiles: [tile, tile, tile, tile], fromSeat, kind: 'add' };
+
+    const rr = this.drawAfterGang(seat);
+    return rr.ok ? { ok: true, message: `座位${seat} 加杠 ${tile}，${rr.message}` } : rr;
+  }
+
   private tilesForWin(seat: Seat): Tile[] {
     const hand = this.hands[seat].list;
-    const meldTiles = this.melds[seat].flatMap(m => m.tiles);
+    const meldTiles = this.melds[seat].flatMap(m => {
+      if (m.type === 'gang') return m.tiles.slice(0, 3);
+      return m.tiles;
+    });
     return [...hand, ...meldTiles];
   }
 
