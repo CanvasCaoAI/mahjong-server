@@ -347,6 +347,8 @@ export class Game {
 
     // 如果你本来可胡但选择碰，等价于对“胡”选择过
     if (p.huEligible.has(seat) && !p.huDecision.has(seat)) p.huDecision.set(seat, 'pass');
+    // 杠优先于碰：选择碰 => 对“杠”选择过（避免卡住）
+    if (p.gangEligible.has(seat) && !p.gangDecision.has(seat)) p.gangDecision.set(seat, 'pass');
 
     p.pengDecision.set(seat, 'peng');
 
@@ -366,6 +368,7 @@ export class Game {
 
     // choosing chi implies pass on higher priority
     if (p.huEligible.has(seat) && !p.huDecision.has(seat)) p.huDecision.set(seat, 'pass');
+    if (p.gangEligible.has(seat) && !p.gangDecision.has(seat)) p.gangDecision.set(seat, 'pass');
     if (p.pengEligible.has(seat) && !p.pengDecision.has(seat)) p.pengDecision.set(seat, 'pass');
 
     p.chiDecision = 'chi';
