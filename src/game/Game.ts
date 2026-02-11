@@ -18,7 +18,8 @@ export type DiscardEvent = { seat: Seat; tile: Tile };
 export type Meld =
   | { type: 'peng'; tiles: [Tile, Tile, Tile]; fromSeat: Seat }
   | { type: 'chi'; tiles: [Tile, Tile, Tile]; fromSeat: Seat }
-  | { type: 'gang'; tiles: [Tile, Tile, Tile, Tile]; fromSeat: Seat | null; kind: 'discard' | 'concealed' | 'add' };
+  | { type: 'gang'; tiles: [Tile, Tile, Tile, Tile]; fromSeat: Seat | null; kind: 'discard' | 'concealed' | 'add' }
+  | { type: 'flower'; tiles: [Tile]; fromSeat: null; kind: 'flower' };
 
 export class Game {
   private hasPengOpportunity(seat: Seat, tile: Tile) {
@@ -136,9 +137,16 @@ export class Game {
       }
     }
 
-    // dealer draws one to begin and must discard
+    // dealer draws one to begin and must discard (handle flower replacement)
     const t = this.wall.draw();
-    if (t) this.hands[0].add(t);
+    if (t) {
+      if (this.isFlower(t)) {
+        this.melds[0].push({ type: 'flower', tiles: [t], fromSeat: null, kind: 'flower' });
+        this.extractFlowersAnd补摸(0);
+      } else {
+        this.hands[0].add(t);
+      }
+    }
     this.phase = 'discard';
   }
 
@@ -212,13 +220,29 @@ export class Game {
     if (seat !== this.turn) return { ok: false, message: '还没轮到你' };
     if (this.phase !== 'draw') return { ok: false, message: '请先打出一张' };
 
-    const t = this.wall.draw();
-    if (!t) {
-      this.phase = 'end';
-      return { ok: false, message: '牌堆已空，流局' };
+    // 轮到你时：先把手里已有的花都补掉（起手摸到花的情况）
+    const rr0 = this.extractFlowersAnd补摸(seat);
+    if (!rr0.ok) return rr0;
+
+    // 正常摸牌：如果摸到花，则自动补摸直到摸到非花
+    while (true) {
+      const t = this.wall.draw();
+      if (!t) {
+        this.phase = 'end';
+        return { ok: false, message: '牌堆已空，流局' };
+      }
+
+      if (this.isFlower(t)) {
+        this.melds[seat].push({ type: 'flower', tiles: [t], fromSeat: null, kind: 'flower' });
+        const rr = this.extractFlowersAnd补摸(seat);
+        if (!rr.ok) return rr;
+        continue;
+      }
+
+      this.hands[seat].add(t);
+      break;
     }
 
-    this.hands[seat].add(t);
     this.phase = 'discard';
     return { ok: true, message: `座位${seat} 摸牌` };
   }
@@ -442,13 +466,63 @@ export class Game {
     return { ok: true, message: `座位${seat} 吃 ${tile}` };
   }
 
+  private isFlower(t: Tile): boolean {
+    return t[0] === 'f';
+  }
+
+  /**
+   * 将手牌中的花牌（f1..f8）全部移入 meld，并为每张花补摸一张。
+   * - 只要补摸到的还是花，就继续补摸，直到补到非花。
+   * - 该过程不改变 turn；phase 由调用方控制。
+   */
+  private extractFlowersAnd补摸(seat: Seat): { ok: boolean; message: string } {
+    let moved = 0;
+
+    while (true) {
+      const hand = this.hands[seat].list;
+      const idx = hand.findIndex((x) => this.isFlower(x));
+      if (idx < 0) break;
+
+      const flower = this.hands[seat].removeAt(idx);
+      this.melds[seat].push({ type: 'flower', tiles: [flower], fromSeat: null, kind: 'flower' });
+      moved++;
+
+      // replacement draw (may chain)
+      while (true) {
+        const t = this.wall.draw();
+        if (!t) {
+          this.phase = 'end';
+          return { ok: false, message: '牌堆已空，流局' };
+        }
+        if (this.isFlower(t)) {
+          this.melds[seat].push({ type: 'flower', tiles: [t], fromSeat: null, kind: 'flower' });
+          moved++;
+          continue;
+        }
+        this.hands[seat].add(t);
+        break;
+      }
+    }
+
+    return { ok: true, message: moved ? `座位${seat} 补花 x${moved}` : '' };
+  }
+
   private drawAfterGang(seat: Seat): { ok: boolean; message: string } {
-    const t = this.wall.draw();
-    if (!t) {
+    // gang 补摸：也要处理花牌
+    const t0 = this.wall.draw();
+    if (!t0) {
       this.phase = 'end';
       return { ok: false, message: '牌堆已空，流局' };
     }
-    this.hands[seat].add(t);
+
+    if (this.isFlower(t0)) {
+      this.melds[seat].push({ type: 'flower', tiles: [t0], fromSeat: null, kind: 'flower' });
+      const rr = this.extractFlowersAnd补摸(seat);
+      if (!rr.ok) return rr;
+    } else {
+      this.hands[seat].add(t0);
+    }
+
     this.phase = 'discard';
     this.turn = seat;
     return { ok: true, message: `座位${seat} 补摸` };
@@ -550,6 +624,7 @@ export class Game {
     const hand = this.hands[seat].list;
     const meldTiles = this.melds[seat].flatMap(m => {
       if (m.type === 'gang') return m.tiles.slice(0, 3);
+      if (m.type === 'flower') return [];
       return m.tiles;
     });
     return [...hand, ...meldTiles];

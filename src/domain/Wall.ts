@@ -20,12 +20,18 @@ export class Wall {
   }
 
   static full(): Wall {
-    // 34 tile types x4 copies = 136
+    // 34 tile types x4 copies = 136, plus 8 flowers = 144
     const tiles: Tile[] = [];
+
+    // m/p/s/z: 34 types x4
     for (let i = 0; i < 34; i++) {
       const t = indexToTile(i);
       for (let k = 0; k < 4; k++) tiles.push(t);
     }
+
+    // flowers: f1..f8, 1 copy each
+    for (let n = 1; n <= 8; n++) tiles.push((`f${n}`) as Tile);
+
     shuffle(tiles);
     return new Wall(tiles);
   }
