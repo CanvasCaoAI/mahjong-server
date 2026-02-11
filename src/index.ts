@@ -47,7 +47,10 @@ io.on('connection', (socket) => {
 
   const debug = !!auth.debug;
 
-  const joinRes = table.joinOrReconnect({ clientId, socketId: socket.id, debug });
+  const tileCountRaw = (auth.tile ?? auth.tileCount);
+  const tileCount = (typeof tileCountRaw === 'number') ? tileCountRaw : Number(String(tileCountRaw ?? ''));
+
+  const joinRes = table.joinOrReconnect({ clientId, socketId: socket.id, debug, tileCount: Number.isFinite(tileCount) ? tileCount : null });
   if (!joinRes.ok) {
     errorTo(socket.id, joinRes.message ?? '无法加入');
     socket.disconnect(true);

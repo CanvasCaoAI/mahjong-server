@@ -117,7 +117,7 @@ export class Game {
     chiDecision: 'chi' | 'pass' | null;
   } | null = null;
 
-  start(opts?: { debug?: boolean }) {
+  start(opts?: { debug?: boolean; tileCount?: number }) {
     this.wall = opts?.debug ? Wall.debugMan() : Wall.full();
     this.hands = [new MahjongHand(), new MahjongHand(), new MahjongHand(), new MahjongHand()];
     this.melds = [[], [], [], []];
@@ -128,8 +128,10 @@ export class Game {
     this.result = undefined;
     this.pendingClaim = null;
 
-    // deal 13 each
-    for (let i = 0; i < 13; i++) {
+    const tileCount = Math.max(1, Math.min(13, Math.floor(opts?.tileCount ?? 13)));
+
+    // deal N each
+    for (let i = 0; i < tileCount; i++) {
       for (const s of [0, 1, 2, 3] as const) {
         this.hands[s].add(this.wall.draw()!);
       }
