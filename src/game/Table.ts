@@ -11,6 +11,9 @@ export class Table {
   // 如果任意客户端用 ?tile=5 连接，则整个房间起手牌数量变为该值
   tileCount: number | null = null;
 
+  // 如果任意客户端用 sameTile 连接，则整个房间牌墙变为该牌
+  sameTile: import('../domain/Tile').Tile | null = null;
+
   message = '等待四位玩家连接并准备…';
 
   lastActiveMs: number = Date.now();
@@ -19,12 +22,16 @@ export class Table {
     this.lastActiveMs = Date.now();
   }
 
-  joinOrReconnect(params: { clientId: string; socketId: string; debug?: boolean; tileCount?: number | null }): { ok: boolean; seat?: Seat; message?: string } {
-    const { clientId, socketId, debug, tileCount } = params;
+  joinOrReconnect(params: { clientId: string; socketId: string; debug?: boolean; tileCount?: number | null; sameTile?: import('../domain/Tile').Tile | null }): { ok: boolean; seat?: Seat; message?: string } {
+    const { clientId, socketId, debug, tileCount, sameTile } = params;
     if (debug) this.debug = true;
     if (typeof tileCount === 'number' && Number.isFinite(tileCount)) {
       const v = Math.floor(tileCount);
       if (v >= 1 && v <= 13) this.tileCount = v;
+    }
+
+    if (sameTile) {
+      this.sameTile = sameTile;
     }
 
     // Existing clientId => reconnect
@@ -71,7 +78,10 @@ export class Table {
 
     const allReady = this.players.every(pp => !!pp && pp.ready);
     if (allReady && !this.game.isStarted) {
-      this.game.start(this.tileCount ? { debug: this.debug, tileCount: this.tileCount } : { debug: this.debug });
+      const base = this.tileCount ? { debug: this.debug, tileCount: this.tileCount } : { debug: this.debug };
+      // sameTile 优先级最高（用于 debug）
+      const opts = this.sameTile ? { ...base, sameTile: this.sameTile } : base;
+      this.game.start(opts);
       this.message = this.debug ? '四人已准备（DEBUG）：东家先打出一张。' : '四人已准备：东家先打出一张。';
     } else {
       this.message = `${p.name} 已准备。`;

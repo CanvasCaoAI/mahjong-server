@@ -117,8 +117,8 @@ export class Game {
     chiDecision: 'chi' | 'pass' | null;
   } | null = null;
 
-  start(opts?: { debug?: boolean; tileCount?: number }) {
-    this.wall = opts?.debug ? Wall.debugMan() : Wall.full();
+  start(opts?: { debug?: boolean; tileCount?: number; sameTile?: Tile }) {
+    this.wall = opts?.sameTile ? Wall.debugSame(opts.sameTile) : (opts?.debug ? Wall.debugMan() : Wall.full());
     this.hands = [new MahjongHand(), new MahjongHand(), new MahjongHand(), new MahjongHand()];
     this.melds = [[], [], [], []];
     this.discards = [];

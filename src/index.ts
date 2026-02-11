@@ -3,6 +3,7 @@ import http from 'http';
 import cors from 'cors';
 import { Server } from 'socket.io';
 import { stateFor } from './net/dto';
+import { isTile, type Tile } from './domain/Tile';
 import { RoomManager } from './rooms/RoomManager';
 
 const app = express();
@@ -50,7 +51,21 @@ io.on('connection', (socket) => {
   const tileCountRaw = (auth.tile ?? auth.tileCount);
   const tileCount = (typeof tileCountRaw === 'number') ? tileCountRaw : Number(String(tileCountRaw ?? ''));
 
-  const joinRes = table.joinOrReconnect({ clientId, socketId: socket.id, debug, tileCount: Number.isFinite(tileCount) ? tileCount : null });
+  const sameTileRaw = auth.sameTile;
+  let sameTile: Tile | null = null;
+  if (typeof sameTileRaw === 'string') {
+    const v = sameTileRaw.trim();
+    const normalized = (v === '一万' || v === '1万') ? 'm1' : v;
+    if (isTile(normalized)) sameTile = normalized;
+  }
+
+  const joinRes = table.joinOrReconnect({
+    clientId,
+    socketId: socket.id,
+    debug,
+    tileCount: Number.isFinite(tileCount) ? tileCount : null,
+    sameTile,
+  });
   if (!joinRes.ok) {
     errorTo(socket.id, joinRes.message ?? '无法加入');
     socket.disconnect(true);

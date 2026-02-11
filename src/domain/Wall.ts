@@ -1,6 +1,6 @@
 import type { Tile } from './Tile';
 import { indexToTile } from './Tile';
-import { makeDebugWallTiles } from './debugTile';
+import { makeDebugWallTiles, makeSameTileWallTiles } from './debugTile';
 
 function shuffle<T>(a: T[]): T[] {
   for (let i = a.length - 1; i > 0; i--) {
@@ -33,6 +33,11 @@ export class Wall {
   static debugMan(): Wall {
     // 136 张全是万子，用于 debug
     return new Wall(makeDebugWallTiles(136));
+  }
+
+  static debugSame(tile: Tile): Wall {
+    // 136 张全是同一张牌，用于 debug
+    return new Wall(makeSameTileWallTiles(tile, 136));
   }
 
   draw(): Tile | null {

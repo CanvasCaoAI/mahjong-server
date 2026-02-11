@@ -9,3 +9,10 @@ export function makeDebugWallTiles(count = 136): Tile[] {
   }
   return tiles;
 }
+
+// Debug wall tiles: all tiles are the same tile.
+export function makeSameTileWallTiles(tile: Tile, count = 136): Tile[] {
+  const tiles: Tile[] = [];
+  for (let i = 0; i < count; i++) tiles.push(tile);
+  return tiles;
+}
