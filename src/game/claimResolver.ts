@@ -71,11 +71,14 @@ function allDecided<T extends string>(eligible: Set<Seat>, decision: Map<Seat, T
  * - 杠/碰如果多人可做：选 seat 编号最小的那一家（与你项目现有写法一致）
  */
 export function decidePendingClaim(p: PendingClaim): ClaimResolution {
-  // 1) 先等所有可胡者表态
+  // 1) 胡：如果存在多人可胡，只要任意一人选择“胡”，则视为所有可胡者一起胡
+  // 这样可以避免有人没点导致卡住，也符合“一炮多响，点一人=全响”的项目需求。
+  const anyHuChosen = [...p.huEligible].some((s) => p.huDecision.get(s) === 'hu');
+  if (anyHuChosen) return { kind: 'hu', winners: sortSeatsAsc([...p.huEligible]) };
+
+  // 否则：仍需要等所有可胡者表态（胡/过），才能进入下一优先级
   if (!allDecided(p.huEligible, p.huDecision)) return { kind: 'wait' };
 
-  const huWinners = [...p.huEligible].filter((s) => p.huDecision.get(s) === 'hu');
-  if (huWinners.length > 0) return { kind: 'hu', winners: sortSeatsAsc(huWinners) };
 
   // 2) 再等所有可杠者表态
   if (!allDecided(p.gangEligible, p.gangDecision)) return { kind: 'wait' };
