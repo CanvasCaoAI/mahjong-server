@@ -1,6 +1,8 @@
 import type { Tile } from '../domain/Tile';
 import type { Seat } from '../game/Player';
 import type { Phase, GameResult, DiscardEvent, Meld } from '../game/Game';
+
+type PublicResult = Omit<GameResult, 'reason'>;
 import type { Table } from '../game/Table';
 import { WinChecker } from '../domain/WinChecker';
 import { chiOptions } from '../game/claim';
@@ -23,7 +25,10 @@ export type PublicState = {
   pengAvailable: boolean;
   chiAvailable: boolean;
   message: string;
-  result?: GameResult;
+  // Old result object no longer contains win text (reason)
+  result?: PublicResult;
+  // Win text/meta extracted as a new object (per requirement)
+  winInfo?: { reason: string };
 };
 
 export function stateFor(table: Table, viewerSocketId: string, connected: boolean): PublicState {
@@ -37,6 +42,8 @@ export function stateFor(table: Table, viewerSocketId: string, connected: boolea
   const handCounts = ([0, 1, 2, 3] as const).map((s) => table.game.getHandCount(s));
 
   const result = table.game.getResult();
+  const winInfo = result ? { reason: result.reason } : undefined;
+  const publicResult: PublicResult | undefined = result ? { winners: result.winners, handsBySeat: result.handsBySeat } : undefined;
 
   const pending = table.game.getPendingClaim();
 
@@ -133,7 +140,8 @@ export function stateFor(table: Table, viewerSocketId: string, connected: boolea
     pengAvailable,
     chiAvailable,
     message: table.message,
-    ...(result ? { result } : {})
+    ...(publicResult ? { result: publicResult } : {}),
+    ...(winInfo ? { winInfo } : {}),
   };
 }
 
