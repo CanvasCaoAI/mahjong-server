@@ -4,6 +4,7 @@ import { Wall } from '../domain/Wall';
 import { WinChecker } from '../domain/WinChecker';
 import type { Seat } from './Player';
 import { countTile, allSeats, chiOptions } from './claim';
+import { canChiByRestriction, canPengGangByRestriction, restrictionStateFromMelds, tileSuit } from './shanghaiRestrictions';
 import { decidePendingClaim, type PendingClaim } from './claimResolver';
 
 export type Phase = 'draw' | 'discard' | 'claim' | 'end';
@@ -36,6 +37,10 @@ export class Game {
   private hasGangOpportunityOnDiscard(seat: Seat, tile: Tile) {
     const hand = this.hands[seat].list;
     return countTile(hand, tile) >= 3;
+  }
+
+  private restriction(seat: Seat) {
+    return restrictionStateFromMelds(this.melds[seat]);
   }
 
   private resolveClaimIfReady(): boolean {
@@ -281,12 +286,22 @@ export class Game {
 
       for (const s of allSeats()) {
         if (s === seat) continue;
+
+        // Hu is not restricted by the suit rule (win checking stays the same)
         if (WinChecker.check([...this.tilesForWin(s), tile]).ok) huEligible.add(s);
-        if (this.hasGangOpportunityOnDiscard(s, tile)) gangEligible.add(s);
-        if (this.hasPengOpportunity(s, tile)) pengEligible.add(s);
+
+        // Suit restriction for peng/gang (honors z exempt)
+        const rs = this.restriction(s);
+        if (this.hasGangOpportunityOnDiscard(s, tile) && canPengGangByRestriction(rs, tile).ok) gangEligible.add(s);
+        if (this.hasPengOpportunity(s, tile) && canPengGangByRestriction(rs, tile).ok) pengEligible.add(s);
       }
 
-      const chiEligible = chiPossible; // only chiSeat can act; availability checked in dto
+      // Suit restriction for chi (only chiSeat can act)
+      const chiEligible = (() => {
+        if (!chiPossible) return false;
+        const rs = this.restriction(chiSeat);
+        return canChiByRestriction(rs, tile).ok;
+      })();
 
       if (huEligible.size === 0 && gangEligible.size === 0 && pengEligible.size === 0 && !chiEligible) {
         this.pendingClaim = null;
@@ -341,6 +356,10 @@ export class Game {
       if (!p.gangEligible.has(seat)) return { ok: false, message: '当前不能杠' };
       if (p.gangDecision.has(seat)) return { ok: true, message: '已选择' };
 
+      // Shanghai suit restriction (honors z exempt)
+      const rr = canPengGangByRestriction(this.restriction(seat), p.tile);
+      if (!rr.ok) return { ok: false, message: rr.reason ?? '当前不能杠' };
+
       // 如果你本来可胡但选择杠，等价于对“胡”选择过
       if (p.huEligible.has(seat) && !p.huDecision.has(seat)) p.huDecision.set(seat, 'pass');
 
@@ -378,6 +397,10 @@ export class Game {
     if (seat === p.fromSeat) return { ok: false, message: '不能碰自己打出的牌' };
     if (!p.pengEligible.has(seat)) return { ok: false, message: '当前不能碰' };
 
+    // Shanghai suit restriction (honors z exempt)
+    const rr = canPengGangByRestriction(this.restriction(seat), p.tile);
+    if (!rr.ok) return { ok: false, message: rr.reason ?? '当前不能碰' };
+
     // 如果你本来可胡但选择碰，等价于对“胡”选择过
     if (p.huEligible.has(seat) && !p.huDecision.has(seat)) p.huDecision.set(seat, 'pass');
     // 杠优先于碰：选择碰 => 对“杠”选择过（避免卡住）
@@ -397,6 +420,10 @@ export class Game {
 
     const p = this.pendingClaim;
     if (!p.chiEligible) return { ok: false, message: '当前不能吃' };
+
+    // Shanghai suit restriction (honors z exempt)
+    const rr = canChiByRestriction(this.restriction(seat), p.tile);
+    if (!rr.ok) return { ok: false, message: rr.reason ?? '当前不能吃' };
     if (seat === p.fromSeat) return { ok: false, message: '不能吃自己打出的牌' };
 
     // choosing chi implies pass on higher priority
@@ -568,22 +595,29 @@ export class Game {
   }
 
   private findConcealedGangTile(seat: Seat): Tile | null {
+    const rs = this.restriction(seat);
     const hand = this.hands[seat].list;
     const cnt = new Map<Tile, number>();
     for (const t of hand) cnt.set(t, (cnt.get(t) ?? 0) + 1);
     for (const [t, c] of cnt.entries()) {
-      if (c >= 4) return t;
+      if (c < 4) continue;
+      // restriction: if chi-locked, only allow that suit (honors exempt)
+      if (!canPengGangByRestriction(rs, t).ok) continue;
+      return t;
     }
     return null;
   }
 
   private findAddGangTile(seat: Seat): Tile | null {
+    const rs = this.restriction(seat);
     const melds = this.melds[seat];
     const hand = this.hands[seat].list;
     for (const m of melds) {
       if (m.type !== 'peng') continue;
       const t = m.tiles[0];
-      if (countTile(hand, t) >= 1) return t;
+      if (countTile(hand, t) < 1) continue;
+      if (!canPengGangByRestriction(rs, t).ok) continue;
+      return t;
     }
     return null;
   }

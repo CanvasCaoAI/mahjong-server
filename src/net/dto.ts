@@ -6,6 +6,7 @@ type PublicResult = Omit<GameResult, 'reason'>;
 import type { Table } from '../game/Table';
 import { WinChecker } from '../domain/WinChecker';
 import { chiOptions } from '../game/claim';
+import { canChiByRestriction, canPengGangByRestriction, restrictionStateFromMelds } from '../game/shanghaiRestrictions';
 
 export type PublicState = {
   connected: boolean;
@@ -80,38 +81,41 @@ export function stateFor(table: Table, viewerSocketId: string, connected: boolea
 
   const winAvailable = selfWinAvailable || claimWinAvailable;
 
-  const claimGangAvailable = !!(
-    started &&
-    yourSeat !== null &&
-    pending &&
-    table.game.currentPhase === 'claim' &&
-    pending.fromSeat !== yourSeat &&
-    pending.gangEligible?.includes(yourSeat) &&
-    !pending.gangDecided?.includes(yourSeat) &&
-    yourHand.filter(t => t === pending.tile).length >= 3
-  );
+  const claimGangAvailable = (() => {
+    if (!started || yourSeat === null || !pending) return false;
+    if (table.game.currentPhase !== 'claim') return false;
+    if (pending.fromSeat === yourSeat) return false;
+    if (!pending.gangEligible?.includes(yourSeat)) return false;
+    if (pending.gangDecided?.includes(yourSeat)) return false;
+    if (yourHand.filter(t => t === pending.tile).length < 3) return false;
 
-  const pengAvailable = !!(
-    started &&
-    yourSeat !== null &&
-    pending &&
-    table.game.currentPhase === 'claim' &&
-    pending.fromSeat !== yourSeat &&
-    pending.pengEligible.includes(yourSeat) &&
-    !pending.pengDecided.includes(yourSeat) &&
-    yourHand.filter(t => t === pending.tile).length >= 2
-  );
+    const state = restrictionStateFromMelds(yourMelds);
+    return canPengGangByRestriction(state, pending.tile).ok;
+  })();
 
-  const chiAvailable = !!(
-    started &&
-    yourSeat !== null &&
-    pending &&
-    table.game.currentPhase === 'claim' &&
-    pending.chiEligible &&
-    pending.chiSeat === yourSeat &&
-    !pending.chiDecided &&
-    chiOptions(yourHand, pending.tile).length > 0
-  );
+  const pengAvailable = (() => {
+    if (!started || yourSeat === null || !pending) return false;
+    if (table.game.currentPhase !== 'claim') return false;
+    if (pending.fromSeat === yourSeat) return false;
+    if (!pending.pengEligible.includes(yourSeat)) return false;
+    if (pending.pengDecided.includes(yourSeat)) return false;
+    if (yourHand.filter(t => t === pending.tile).length < 2) return false;
+
+    const state = restrictionStateFromMelds(yourMelds);
+    return canPengGangByRestriction(state, pending.tile).ok;
+  })();
+
+  const chiAvailable = (() => {
+    if (!started || yourSeat === null || !pending) return false;
+    if (table.game.currentPhase !== 'claim') return false;
+    if (!pending.chiEligible) return false;
+    if (pending.chiSeat !== yourSeat) return false;
+    if (pending.chiDecided) return false;
+    if (chiOptions(yourHand, pending.tile).length <= 0) return false;
+
+    const state = restrictionStateFromMelds(yourMelds);
+    return canChiByRestriction(state, pending.tile).ok;
+  })();
 
   // 自己回合的暗杠/加杠
   const selfGangAvailable = (() => {
@@ -119,17 +123,25 @@ export function stateFor(table: Table, viewerSocketId: string, connected: boolea
     if (table.game.currentPhase !== 'discard') return false;
     if (table.game.currentTurn !== yourSeat) return false;
 
+    const state = restrictionStateFromMelds(yourMelds);
+
     // 加杠：有碰且手里有第 4 张
     for (const m of yourMelds) {
       if (m.type !== 'peng') continue;
       const t = m.tiles[0];
-      if (yourHand.some(x => x === t)) return true;
+      if (!yourHand.some(x => x === t)) continue;
+      if (!canPengGangByRestriction(state, t).ok) continue;
+      return true;
     }
 
     // 暗杠：手里有 4 张
     const cnt = new Map<Tile, number>();
     for (const t of yourHand) cnt.set(t, (cnt.get(t) ?? 0) + 1);
-    for (const c of cnt.values()) if (c >= 4) return true;
+    for (const [t, c] of cnt.entries()) {
+      if (c < 4) continue;
+      if (!canPengGangByRestriction(state, t).ok) continue;
+      return true;
+    }
 
     return false;
   })();
