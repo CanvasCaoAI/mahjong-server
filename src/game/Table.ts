@@ -1,9 +1,17 @@
 import { Player, type Seat } from './Player';
 import { Game } from './Game';
+import type { Tile } from '../domain/Tile';
+import { computeRoundDelta, type RoundRecord } from './scoring';
 
 export class Table {
   readonly game = new Game();
   readonly players: Array<Player | null> = [null, null, null, null];
+
+  // Scoreboard across rounds (simple)
+  scores: [number, number, number, number] = [0, 0, 0, 0];
+  round = 0;
+  roundHistory: RoundRecord[] = [];
+  private _settledRound = 0;
 
   // 如果任意客户端用 ?debug=true 连接，则整个房间进入 debug 发牌模式
   debug = false;
@@ -82,6 +90,11 @@ export class Table {
       // sameTile 优先级最高（用于 debug）
       const opts = this.sameTile ? { ...base, sameTile: this.sameTile } : base;
       this.game.start(opts);
+
+      // new round started
+      this.round += 1;
+      this._settledRound = 0;
+
       this.message = this.debug ? '四人已准备（DEBUG）：东家先打出一张。' : '四人已准备：东家先打出一张。';
     } else {
       this.message = `${p.name} 已准备。`;
@@ -96,6 +109,45 @@ export class Table {
     p.online = false;
     p.lastSeenMs = Date.now();
     this.touch();
+  }
+
+  maybeSettleRound() {
+    // Settle once per round when game ends.
+    if (!this.game.isStarted) return;
+    const result = this.game.getResult();
+    if (!result) return;
+    if (this._settledRound === this.round) return;
+
+    // determine win meta best-effort
+    const meta = (this.game as any).getLastWinMeta?.() as undefined | {
+      winType: 'self' | 'discard' | 'unknown';
+      fromSeat: Seat | null;
+      winTile: Tile | null;
+    };
+
+    const winType = meta?.winType ?? 'unknown';
+    const fromSeat = meta?.fromSeat ?? null;
+    const winTile = meta?.winTile ?? null;
+
+    const deltaBySeat = computeRoundDelta({ winners: result.winners, winType, fromSeat });
+
+    // apply scores
+    for (const s of [0, 1, 2, 3] as const) {
+      this.scores[s] += deltaBySeat[s];
+    }
+
+    const record: RoundRecord = {
+      round: this.round,
+      winners: result.winners,
+      winTile,
+      winType,
+      fromSeat,
+      reason: result.reason,
+      deltaBySeat,
+    };
+
+    this.roundHistory.push(record);
+    this._settledRound = this.round;
   }
 
   findSeat(socketId: string): Seat | null {

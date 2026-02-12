@@ -22,6 +22,12 @@ export type Meld =
   | { type: 'flower'; tiles: [Tile]; fromSeat: null; kind: 'flower' };
 
 export class Game {
+  private lastWinMeta: { winType: 'self' | 'discard' | 'unknown'; fromSeat: Seat | null; winTile: Tile | null } | null = null;
+
+  getLastWinMeta() {
+    return this.lastWinMeta;
+  }
+
   private hasPengOpportunity(seat: Seat, tile: Tile) {
     const hand = this.hands[seat].list;
     return countTile(hand, tile) >= 2;
@@ -62,6 +68,7 @@ export class Game {
       if (finalWinners.length > 0) {
         this.phase = 'end';
         this.result = { winners: finalWinners, handsBySeat, reason };
+        this.lastWinMeta = { winType: 'discard', fromSeat: p.fromSeat, winTile: p.tile };
         this.pendingClaim = null;
         return true;
       }
@@ -127,6 +134,7 @@ export class Game {
     this.started = true;
     this.result = undefined;
     this.pendingClaim = null;
+    this.lastWinMeta = null;
 
     const tileCount = Math.max(1, Math.min(13, Math.floor(opts?.tileCount ?? 13)));
 
@@ -160,6 +168,7 @@ export class Game {
     this.turn = 0;
     this.phase = 'draw';
     this.pendingClaim = null;
+    this.lastWinMeta = null;
   }
 
   // 用于调试：直接开启全万子牌墙
@@ -655,6 +664,9 @@ export class Game {
     if (r.ok) {
       this.phase = 'end';
       this.result = { winners: [seat], handsBySeat: { [seat]: tiles }, reason: r.reason ?? '胡牌' };
+      // Best-effort: treat the last tile in hand list as the winning tile (usually the drawn tile).
+      const winTile = (this.hands[seat].list.length > 0) ? (this.hands[seat].list[this.hands[seat].list.length - 1] ?? null) : null;
+      this.lastWinMeta = { winType: 'self', fromSeat: null, winTile: winTile as any };
       return { ok: true, message: `座位${seat} 胡了` };
     }
     return { ok: false, message: r.reason ?? '不能胡' };

@@ -25,6 +25,20 @@ export type PublicState = {
   pengAvailable: boolean;
   chiAvailable: boolean;
   message: string;
+
+  // Scoreboard
+  scores: [number, number, number, number];
+  round: number;
+  roundHistory: Array<{
+    round: number;
+    winners: Seat[];
+    winTile: Tile | null;
+    winType: 'self' | 'discard' | 'unknown';
+    fromSeat: Seat | null;
+    reason: string;
+    deltaBySeat: Record<Seat, number>;
+  }>;
+
   // Old result object no longer contains win text (reason)
   result?: PublicResult;
   // Win text/meta extracted as a new object (per requirement)
@@ -140,6 +154,11 @@ export function stateFor(table: Table, viewerSocketId: string, connected: boolea
     pengAvailable,
     chiAvailable,
     message: table.message,
+
+    scores: table.scores,
+    round: table.round,
+    roundHistory: table.roundHistory,
+
     ...(publicResult ? { result: publicResult } : {}),
     ...(winInfo ? { winInfo } : {}),
   };

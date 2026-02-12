@@ -26,6 +26,10 @@ function errorTo(socketId: string, message: string) {
 
 function broadcastRoom(roomId: string) {
   const table = rooms.get(roomId);
+
+  // Update scoreboard/history when a round ends.
+  table.maybeSettleRound();
+
   for (const s of io.sockets.sockets.values()) {
     const auth: any = s.handshake.auth || {};
     if (auth.roomId !== roomId) continue;
