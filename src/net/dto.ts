@@ -6,7 +6,7 @@ type PublicResult = Omit<GameResult, 'reason'>;
 import type { Table } from '../game/Table';
 import { WinChecker } from '../domain/WinChecker';
 import { chiOptions } from '../game/claim';
-import { canChiByRestriction, canPengGangByRestriction, restrictionStateFromMelds } from '../game/shanghaiRestrictions';
+import { canChiByRestriction, canPengGangByRestriction, restrictionStateFromMelds } from '../rules/shanghaiRestrictions';
 
 export type PublicState = {
   connected: boolean;

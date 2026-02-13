@@ -1,5 +1,5 @@
 import type { Tile } from '../domain/Tile';
-import type { Meld } from './Game';
+import type { Meld } from '../game/Game';
 
 /**
  * Shanghai mahjong restriction to support only:

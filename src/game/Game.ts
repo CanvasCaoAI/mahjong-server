@@ -4,7 +4,7 @@ import { Wall } from '../domain/Wall';
 import { WinChecker } from '../domain/WinChecker';
 import type { Seat } from './Player';
 import { countTile, allSeats, chiOptions } from './claim';
-import { canChiByRestriction, canPengGangByRestriction, restrictionStateFromMelds, tileSuit } from './shanghaiRestrictions';
+import { canChiByRestriction, canPengGangByRestriction, restrictionStateFromMelds, tileSuit } from '../rules/shanghaiRestrictions';
 import { decidePendingClaim, type PendingClaim } from './claimResolver';
 
 export type Phase = 'draw' | 'discard' | 'claim' | 'end';
