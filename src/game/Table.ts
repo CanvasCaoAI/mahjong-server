@@ -85,7 +85,10 @@ export class Table {
     p.lastSeenMs = Date.now();
 
     const allReady = this.players.every(pp => !!pp && pp.ready);
-    if (allReady && !this.game.isStarted) {
+
+    const canStart = (!this.game.isStarted) || (this.game.isStarted && this.game.currentPhase === 'end');
+
+    if (allReady && canStart) {
       const base = this.tileCount ? { debug: this.debug, tileCount: this.tileCount } : { debug: this.debug };
       // sameTile 优先级最高（用于 debug）
       const opts = this.sameTile ? { ...base, sameTile: this.sameTile } : base;
@@ -114,9 +117,10 @@ export class Table {
   maybeSettleRound() {
     // Settle once per round when game ends.
     if (!this.game.isStarted) return;
-    const result = this.game.getResult();
-    if (!result) return;
+    if (this.game.currentPhase !== 'end') return;
     if (this._settledRound === this.round) return;
+
+    const result = this.game.getResult();
 
     // determine win meta best-effort
     const meta = (this.game as any).getLastWinMeta?.() as undefined | {
@@ -128,6 +132,30 @@ export class Table {
     const winType = meta?.winType ?? 'unknown';
     const fromSeat = meta?.fromSeat ?? null;
     const winTile = meta?.winTile ?? null;
+
+    // 流局：game 进入 end 但没有 result
+    if (!result) {
+      const deltaBySeat: Record<Seat, number> = { 0: 0, 1: 0, 2: 0, 3: 0 };
+      const record: RoundRecord = {
+        round: this.round,
+        winners: [],
+        winTile: null,
+        winType: 'unknown',
+        fromSeat: null,
+        reason: '流局',
+        deltaBySeat,
+      };
+      this.roundHistory.push(record);
+      this._settledRound = this.round;
+
+      // 重置准备状态：等待所有人点击“准备”进入下一局
+      for (const s of [0, 1, 2, 3] as const) {
+        const p = this.players[s];
+        if (p) p.ready = false;
+      }
+      this.message = '流局，点击“准备”开始下一局。';
+      return;
+    }
 
     // Compute score per winner + display reason (winInfo.reason)
     const scoreByWinner: Partial<Record<Seat, number>> = {};
@@ -177,6 +205,13 @@ export class Table {
 
     this.roundHistory.push(record);
     this._settledRound = this.round;
+
+    // 重置准备状态：等待所有人点击“准备”进入下一局
+    for (const s of [0, 1, 2, 3] as const) {
+      const p = this.players[s];
+      if (p) p.ready = false;
+    }
+    this.message = '本局结束，点击“准备”开始下一局。';
   }
 
   findSeat(socketId: string): Seat | null {
