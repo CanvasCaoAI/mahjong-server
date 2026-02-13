@@ -2,6 +2,7 @@ import type { Tile } from '../domain/Tile';
 import { MahjongHand } from '../domain/MahjongHand';
 import { Wall } from '../domain/Wall';
 import { WinChecker } from '../domain/WinChecker';
+import { isQingYiSeTiles } from '../rules/winExtras';
 import type { Seat } from './Player';
 import { countTile, allSeats, chiOptions } from './claim';
 import { canChiByRestriction, canPengGangByRestriction, restrictionStateFromMelds, tileSuit } from '../rules/shanghaiRestrictions';
@@ -65,6 +66,14 @@ export class Game {
           p.huDecision.set(w, 'pass');
           continue;
         }
+        // 规则：没有花不能胡（清一色除外）
+        const flowerCount = this.melds[w].filter((m) => m.type === 'flower').reduce((a, m) => a + m.tiles.length, 0);
+        const qingYiSe = isQingYiSeTiles(tiles);
+        if (flowerCount <= 0 && !qingYiSe) {
+          p.huDecision.set(w, 'pass');
+          continue;
+        }
+
         handsBySeat[w] = tiles;
         reason = r.reason ?? reason;
       }
@@ -288,7 +297,14 @@ export class Game {
         if (s === seat) continue;
 
         // Hu is not restricted by the suit rule (win checking stays the same)
-        if (WinChecker.check([...this.tilesForWin(s), tile]).ok) huEligible.add(s);
+        const candidate = [...this.tilesForWin(s), tile];
+        const ok = WinChecker.check(candidate).ok;
+        if (ok) {
+          // 规则：没有花不能胡（清一色除外）。花 = meld 中的 flower 张数
+          const flowerCount = this.melds[s].filter((m) => m.type === 'flower').reduce((a, m) => a + m.tiles.length, 0);
+          const qingYiSe = isQingYiSeTiles(candidate);
+          if (flowerCount > 0 || qingYiSe) huEligible.add(s);
+        }
 
         // Suit restriction for peng/gang (honors z exempt)
         const rs = this.restriction(s);
@@ -704,6 +720,10 @@ export class Game {
     const tiles = this.tilesForWin(seat);
     const r = WinChecker.check(tiles);
     if (r.ok) {
+      // 规则：没有花不能胡（清一色除外）
+      const flowerCount = this.melds[seat].filter((m) => m.type === 'flower').reduce((a, m) => a + m.tiles.length, 0);
+      const qingYiSe = isQingYiSeTiles(tiles);
+      if (flowerCount <= 0 && !qingYiSe) return { ok: false, message: '没有花不能胡（清一色除外）' };
       this.phase = 'end';
       this.result = { winners: [seat], handsBySeat: { [seat]: tiles }, reason: r.reason ?? '胡牌' };
       // Best-effort: treat the last tile in hand list as the winning tile (usually the drawn tile).

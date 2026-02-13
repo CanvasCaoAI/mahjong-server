@@ -67,7 +67,16 @@ export function stateFor(table: Table, viewerSocketId: string, connected: boolea
   // 自摸胡：轮到你且不在 claim
   const canSelfHu = !!(started && yourSeat !== null && table.game.currentTurn === yourSeat && table.game.currentPhase !== 'end' && table.game.currentPhase !== 'claim');
   const tilesForWin = [...yourHand, ...yourMelds.flatMap(m => (m.type === 'gang' ? m.tiles.slice(0, 3) : m.tiles))];
-  const selfWinAvailable = canSelfHu ? !!WinChecker.check(tilesForWin).ok : false;
+  const flowerCount = yourMelds.filter((m) => m.type === 'flower').reduce((a, m) => a + m.tiles.length, 0);
+  const selfOk = canSelfHu ? !!WinChecker.check(tilesForWin).ok : false;
+  const selfIsQingYiSe = (() => {
+    const ts = tilesForWin.filter((t) => t[0] !== 'f');
+    if (ts.length === 0) return false;
+    if (ts.some((t) => t[0] === 'z')) return false;
+    const suits = new Set(ts.map((t) => t[0]).filter((s) => s === 'm' || s === 'p' || s === 's'));
+    return suits.size === 1;
+  })();
+  const selfWinAvailable = canSelfHu ? (selfOk && (flowerCount > 0 || selfIsQingYiSe)) : false;
 
   // 点炮胡：claim 阶段，且该 seat 在 huEligible 中且尚未决定
   const claimWinAvailable = !!(
@@ -78,7 +87,12 @@ export function stateFor(table: Table, viewerSocketId: string, connected: boolea
     pending.fromSeat !== yourSeat &&
     pending.huEligible.includes(yourSeat) &&
     !pending.huDecided.includes(yourSeat) &&
-    WinChecker.check([...tilesForWin, pending.tile]).ok
+    (() => {
+      const ok = WinChecker.check([...tilesForWin, pending.tile]).ok;
+      const ts = [...tilesForWin, pending.tile].filter((t) => t[0] !== 'f');
+      const isQingYiSe = ts.length > 0 && !ts.some((t) => t[0] === 'z') && (new Set(ts.map((t) => t[0]).filter((s) => s === 'm' || s === 'p' || s === 's'))).size === 1;
+      return ok && (flowerCount > 0 || isQingYiSe);
+    })()
   );
 
   const winAvailable = selfWinAvailable || claimWinAvailable;
