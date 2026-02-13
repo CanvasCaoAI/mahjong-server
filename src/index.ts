@@ -155,10 +155,10 @@ io.on('connection', (socket) => {
     broadcastRoom(roomId);
   });
 
-  socket.on('chi', () => {
+  socket.on('chi', (opts?: { a?: string; b?: string }) => {
     const seat = table.findSeat(socket.id);
     if (seat === null) return;
-    const r = table.game.chi(seat);
+    const r = table.game.chi(seat, opts as any);
     table.message = r.message;
     if (!r.ok) errorTo(socket.id, r.message);
     broadcastRoom(roomId);

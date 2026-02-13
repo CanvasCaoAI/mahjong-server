@@ -1,7 +1,7 @@
 import { Player, type Seat } from './Player';
 import { Game } from './Game';
 import type { Tile } from '../domain/Tile';
-import { computeRoundDelta, type RoundRecord } from './scoring';
+import { computeRoundDelta, computeWinnerScoreAndReason, type RoundRecord } from './scoring';
 
 export class Table {
   readonly game = new Game();
@@ -129,7 +129,36 @@ export class Table {
     const fromSeat = meta?.fromSeat ?? null;
     const winTile = meta?.winTile ?? null;
 
-    const deltaBySeat = computeRoundDelta({ winners: result.winners, winType, fromSeat });
+    // Compute score per winner + display reason (winInfo.reason)
+    const scoreByWinner: Partial<Record<Seat, number>> = {};
+    const reasonByWinner: Partial<Record<Seat, string>> = {};
+    for (const w of result.winners) {
+      const tiles = (result.handsBySeat?.[w] ?? []) as any;
+      const rr = computeWinnerScoreAndReason({ game: this.game as any, winner: w, winnerTiles: tiles, meta: { winType, fromSeat, winTile } });
+      scoreByWinner[w] = rr.score;
+      reasonByWinner[w] = rr.reason;
+    }
+
+    const deltaBySeat = computeRoundDelta({ winners: result.winners, winType, fromSeat, scoreByWinner });
+
+    // Pick a single reason for UI: the highest-scoring winner's reason (stable).
+    const pickedReason = (() => {
+      let best: Seat | null = null;
+      let bestScore = -Infinity;
+      for (const w of result.winners) {
+        const sc = scoreByWinner[w] ?? 0;
+        if (best === null || sc > bestScore) {
+          best = w;
+          bestScore = sc;
+        }
+      }
+      return best !== null ? (reasonByWinner[best] ?? result.reason) : result.reason;
+    })();
+
+    // Mutate game result reason so frontend winInfo.reason shows our computed category.
+    try {
+      (result as any).reason = pickedReason;
+    } catch { /* ignore */ }
 
     // apply scores
     for (const s of [0, 1, 2, 3] as const) {

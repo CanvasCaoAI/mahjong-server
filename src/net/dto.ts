@@ -25,6 +25,8 @@ export type PublicState = {
   gangAvailable: boolean;
   pengAvailable: boolean;
   chiAvailable: boolean;
+  /** 当你可以吃时，返回所有可选的吃牌组合（从手牌里拿出的两张） */
+  chiOptions?: [Tile, Tile][];
   message: string;
 
   // Scoreboard
@@ -105,13 +107,16 @@ export function stateFor(table: Table, viewerSocketId: string, connected: boolea
     return canPengGangByRestriction(state, pending.tile).ok;
   })();
 
+  const chiOpts = (started && yourSeat !== null && pending && table.game.currentPhase === 'claim' && pending.chiEligible && pending.chiSeat === yourSeat)
+    ? (chiOptions(yourHand, pending.tile) as [Tile, Tile][]) : [];
+
   const chiAvailable = (() => {
     if (!started || yourSeat === null || !pending) return false;
     if (table.game.currentPhase !== 'claim') return false;
     if (!pending.chiEligible) return false;
     if (pending.chiSeat !== yourSeat) return false;
     if (pending.chiDecided) return false;
-    if (chiOptions(yourHand, pending.tile).length <= 0) return false;
+    if (chiOpts.length <= 0) return false;
 
     const state = restrictionStateFromMelds(yourMelds);
     return canChiByRestriction(state, pending.tile).ok;
@@ -166,6 +171,8 @@ export function stateFor(table: Table, viewerSocketId: string, connected: boolea
     pengAvailable,
     chiAvailable,
     message: table.message,
+
+    ...(chiAvailable ? { chiOptions: chiOpts } : {}),
 
     scores: table.scores,
     round: table.round,

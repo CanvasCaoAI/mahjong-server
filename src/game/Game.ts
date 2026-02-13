@@ -412,7 +412,7 @@ export class Game {
     return { ok: true, message: resolved ? `座位${seat} 碰（已结算）` : `座位${seat} 碰（已记录，等待胡/碰更高优先级决定）` };
   }
 
-  chi(seat: Seat): { ok: boolean; message: string } {
+  chi(seat: Seat, opts?: { a?: Tile; b?: Tile }): { ok: boolean; message: string } {
     if (!this.started) return { ok: false, message: '游戏尚未开始' };
     if (this.phase !== 'claim' || !this.pendingClaim) return { ok: false, message: '当前不能吃' };
     if (seat !== this.pendingClaim.chiSeat) return { ok: false, message: '只有下一家可以吃' };
@@ -431,6 +431,10 @@ export class Game {
     if (p.gangEligible.has(seat) && !p.gangDecision.has(seat)) p.gangDecision.set(seat, 'pass');
     if (p.pengEligible.has(seat) && !p.pengDecision.has(seat)) p.pengDecision.set(seat, 'pass');
 
+    // record chosen option (if provided)
+    if (opts?.a && opts?.b) {
+      (p as any).chiOption = [opts.a, opts.b] as [Tile, Tile];
+    }
     p.chiDecision = 'chi';
 
     const resolved = this.resolveClaimIfReady();
@@ -475,9 +479,13 @@ export class Game {
     const opts = chiOptions(this.hands[seat].list, tile);
     if (!opts.length) return { ok: false, message: '当前不能吃' };
 
-    const first = opts[0];
-    if (!first) return { ok: false, message: '当前不能吃' };
-    const [a, b] = first;
+    // If client specified a chi option, use it; otherwise fallback to the first option.
+    const picked = (p as any).chiOption as undefined | [Tile, Tile];
+    const chosen = picked && opts.some(([x, y]) => x === picked[0] && y === picked[1])
+      ? picked
+      : opts[0]!;
+
+    const [a, b] = chosen;
 
     const removeOne = (t: Tile) => {
       const hand = this.hands[seat].list;
