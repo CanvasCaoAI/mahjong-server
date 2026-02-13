@@ -1,7 +1,7 @@
 import { Player, type Seat } from './Player';
 import { Game } from './Game';
 import type { Tile } from '../domain/Tile';
-import { computeRoundDelta, computeWinnerScoreAndReason, type RoundRecord } from './scoring';
+import { computeRoundDelta, computeWinnerScoreAndReason, type RoundRecord } from '../rules/scoring/finalScoring';
 
 export class Table {
   readonly game = new Game();
