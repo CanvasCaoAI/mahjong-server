@@ -159,6 +159,16 @@ export class Game {
       }
     }
 
+    // 起手补花：所有玩家把手里的花牌立刻补掉（直到手里没有花）
+    for (const s of [0, 1, 2, 3] as const) {
+      const rr = this.extractFlowersAnd补摸(s);
+      // 起手补花如果导致牌堆空，则直接结束
+      if (!rr.ok) {
+        this.phase = 'end';
+        break;
+      }
+    }
+
     // dealer draws one to begin and must discard (handle flower replacement)
     const t = this.wall.draw();
     if (t) {
