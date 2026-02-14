@@ -13,64 +13,57 @@
 
 ---
 
-## 1) 手动启动（不守护，不推荐长期）
+## 1) 构建并启动（推荐：生产方式）
 
 ```bash
 cd ~/mahjong-server
 npm ci
-npm run dev
+npm run build
+npm run start
 ```
 
 后端监听：
 - `http://<EC2 公网 IP>:5174`
 - 健康检查：`http://<EC2 公网 IP>:5174/health`
 
-> 备注：线上更建议做成 `build + node dist/...` 的生产启动方式；当前文档先按现有脚本运行。
-
 ---
 
-## 2) systemd 守护（推荐：崩了自动重启 + 开机自启）
+## 2) pm2 守护（推荐：崩了自动重启 + 开机自启）
 
-### 2.1 创建 service 文件
+### 2.1 安装 pm2
 
 ```bash
-sudo tee /etc/systemd/system/mahjong-server.service > /dev/null <<'EOF'
-[Unit]
-Description=mahjong-server
-After=network.target
-
-[Service]
-Type=simple
-User=ubuntu
-WorkingDirectory=/home/ubuntu/mahjong-server
-Environment=NODE_ENV=production
-ExecStart=/usr/bin/env npm run dev
-Restart=always
-RestartSec=2
-
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-EOF
+sudo npm i -g pm2
+pm2 -v
 ```
 
-把 `User=ubuntu` / `WorkingDirectory=` 改成你实际的用户名和路径。
-
-### 2.2 启用/启动
+### 2.2 启动后端（跑编译后的 dist）
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable mahjong-server
-sudo systemctl restart mahjong-server
-sudo systemctl status mahjong-server --no-pager
+cd ~/mahjong-server
+npm ci
+npm run build
+
+pm2 start dist/index.js --name mahjong-server --time
+pm2 save
 ```
 
-### 2.3 查看日志
+### 2.3 设置开机自启
 
 ```bash
-journalctl -u mahjong-server -f
+pm2 startup
+# 按提示复制粘贴它输出的 sudo 命令
+pm2 save
+```
+
+### 2.4 常用命令
+
+```bash
+pm2 status
+pm2 logs mahjong-server
+pm2 restart mahjong-server
+pm2 stop mahjong-server
+pm2 delete mahjong-server
 ```
 
 ---
@@ -81,5 +74,8 @@ journalctl -u mahjong-server -f
 cd ~/mahjong-server
 git pull
 npm ci
-sudo systemctl restart mahjong-server
+npm run build
+pm2 restart mahjong-server
 ```
+
+> 说明：我们让 pm2 直接运行 `dist/index.js`，比 `tsx watch` 更轻更稳。
