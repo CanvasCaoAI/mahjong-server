@@ -174,7 +174,9 @@ export class Game {
     if (t) {
       if (this.isFlower(t)) {
         this.melds[0].push({ type: 'flower', tiles: [t], fromSeat: null, kind: 'flower' });
-        this.extractFlowersAnd补摸(0);
+        // IMPORTANT: drawn flower also needs an immediate replacement draw
+        const rr = this.补摸直到非花(0);
+        if (!rr.ok) return;
       } else {
         this.hands[0].add(t);
       }
@@ -267,8 +269,9 @@ export class Game {
 
       if (this.isFlower(t)) {
         this.melds[seat].push({ type: 'flower', tiles: [t], fromSeat: null, kind: 'flower' });
-        const rr = this.extractFlowersAnd补摸(seat);
-        if (!rr.ok) return rr;
+        // IMPORTANT: drawn flower also needs an immediate replacement draw
+        const rr = this.补摸直到非花(seat);
+        if (!rr.ok) return { ok: false, message: rr.message };
         continue;
       }
 
@@ -542,6 +545,28 @@ export class Game {
   }
 
   /**
+   * 花牌补摸：从牌墙一直摸，直到摸到非花。
+   * 期间摸到的花都会进入 meld。
+   */
+  private 补摸直到非花(seat: Seat): { ok: boolean; moved: number; message: string } {
+    let moved = 0;
+    while (true) {
+      const t = this.wall.draw();
+      if (!t) {
+        this.phase = 'end';
+        return { ok: false, moved, message: '牌堆已空，流局' };
+      }
+      if (this.isFlower(t)) {
+        this.melds[seat].push({ type: 'flower', tiles: [t], fromSeat: null, kind: 'flower' });
+        moved++;
+        continue;
+      }
+      this.hands[seat].add(t);
+      return { ok: true, moved, message: moved ? `座位${seat} 补花 x${moved}` : '' };
+    }
+  }
+
+  /**
    * 将手牌中的花牌（f1..f8）全部移入 meld，并为每张花补摸一张。
    * - 只要补摸到的还是花，就继续补摸，直到补到非花。
    * - 该过程不改变 turn；phase 由调用方控制。
@@ -558,21 +583,9 @@ export class Game {
       this.melds[seat].push({ type: 'flower', tiles: [flower], fromSeat: null, kind: 'flower' });
       moved++;
 
-      // replacement draw (may chain)
-      while (true) {
-        const t = this.wall.draw();
-        if (!t) {
-          this.phase = 'end';
-          return { ok: false, message: '牌堆已空，流局' };
-        }
-        if (this.isFlower(t)) {
-          this.melds[seat].push({ type: 'flower', tiles: [t], fromSeat: null, kind: 'flower' });
-          moved++;
-          continue;
-        }
-        this.hands[seat].add(t);
-        break;
-      }
+      const rr = this.补摸直到非花(seat);
+      moved += rr.moved;
+      if (!rr.ok) return { ok: false, message: rr.message };
     }
 
     return { ok: true, message: moved ? `座位${seat} 补花 x${moved}` : '' };
@@ -588,8 +601,9 @@ export class Game {
 
     if (this.isFlower(t0)) {
       this.melds[seat].push({ type: 'flower', tiles: [t0], fromSeat: null, kind: 'flower' });
-      const rr = this.extractFlowersAnd补摸(seat);
-      if (!rr.ok) return rr;
+      // IMPORTANT: gang补摸若摸到花，也需要立刻补到非花
+      const rr = this.补摸直到非花(seat);
+      if (!rr.ok) return { ok: false, message: rr.message };
     } else {
       this.hands[seat].add(t0);
     }
